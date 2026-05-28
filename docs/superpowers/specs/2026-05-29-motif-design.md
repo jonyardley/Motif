@@ -28,6 +28,10 @@ The product has an opinionated philosophy that shapes every default: **you make 
 
 This is a values stance, not a neutral piece of UX. The honest research caveat is that this stance is more strongly supported by pedagogical tradition (Neuhaus, Whiteside, generations of teachers) than by controlled experimental studies — see §13.
 
+## 1b. Philosophy: low-overhead, magic-minimum-taps
+
+Equally opinionated: **the app must not feel like admin.** Every segment setup step that requires typing or precise touch input is a tax on actually practicing. The product target is: photograph a page, draw boxes by drag, get usable segments with key/time/tempo/dynamic context attached, with as few taps as possible. Manual override is always available but rarely needed. See §6 (capture) and §7 (segment editor) for the v1 automation; the honest scope of what's automatable on-device without a trained OMR model is in §11.
+
 ## 2. Core concepts and data model
 
 ### Piece
@@ -67,7 +71,7 @@ Segment {
   id
   piece_id
   label              // optional human name, e.g. "Largo opening"
-  rects: [Rect]      // each rect is { page_id, x, y, w, h } in page-relative coords
+  rects: [Rect]      // current scope: each rect is { page_id, x, y, w, h } in page-relative coords
   difficulty         // Struggling | Working | Solid | Mastered
   tags: [String]     // e.g. "octaves", "trill", "fingering", "rhythm"
   notes              // free text
@@ -79,12 +83,21 @@ Segment {
   dynamic_marking    // optional, e.g. "f pesante", "p"
   expression_note    // optional, e.g. "dim.", "agitato"
 
+  // Scope evolution — see §2.1
+  scope_history: [ScopeStage]
+
   created_at
   practice_history: [PracticeAttempt]
 
   // v2/v3 hooks (present but unused in v1):
   memorisation_state // None | Learning | Memorised | Verified
   goal               // optional free-text micro-goal, e.g. "hands together at 80bpm no stops"
+}
+
+ScopeStage {
+  rects: [Rect]                  // what the scope was at this stage
+  difficulty_at_promotion        // what the user rated it before expanding
+  promoted_at                    // when this stage ended and the next began
 }
 ```
 
@@ -93,6 +106,24 @@ Notes on the mask model:
 - **Rectangles, not freeform polygons.** Rectangle unions handle every case observed in scoping (cross-stave, cross-system, cross-page, overlapping, key-sig context strip). Freeform lasso is overkill on a touchscreen and dramatically complicates the editor.
 - **Cross-page segments** are allowed (a segment's rects may live on different pages). Rare; the model costs nothing to support.
 - **Overlapping segments** are allowed. Segments are independent objects whose rects may happen to intersect.
+
+### 2.1 Segment scope evolution
+
+A segment is not fixed in size for its lifetime. A common and pedagogically valid practice pattern is:
+
+1. Start with a tiny scope — a single beat with a complex figure, a single bar with an awkward leap.
+2. Practice it until it's Solid.
+3. **Expand** the scope outward — to two beats, to a bar, to two bars, to a phrase.
+4. Repeat.
+
+This is "chunking up": the kernel is locked, then it's re-contextualised by enlarging the unit of practice. The data model represents this explicitly:
+
+- The Segment's `rects` field is its **current scope**.
+- `scope_history` records every previous scope state, the difficulty rating at the moment of promotion, and the timestamp.
+- The Segment's identity is stable across scope changes — practice_history travels with it, so the user sees the chunking-up story per segment: "started as beat 3, became bar 1, became bars 1-2; took 12 / 8 / 5 sessions per stage."
+- On expansion, the user is prompted to re-rate difficulty (default: drop one step — Solid → Working). The previous rating is preserved in the `ScopeStage`.
+
+The heatmap can visualise scope evolution as concentric outlines (defer to v2 if visually noisy) — the "kernel" you started from is still visible inside the current envelope.
 
 ### PracticeAttempt
 
@@ -196,9 +227,14 @@ When the segment's `stalled` signal is true (§3 Stall detection), the practice 
 
 The card is the v1 form of the "jumping-off point" — explicitly designed so the app is not a closed loop but a prompt back into richer off-app practice.
 
-### 4.4 Context pass on graduation
+### 4.4 Graduation prompt — context pass and scope expansion
 
-When the user rates a segment **Solid** for the first time, the app offers an optional "context pass": a one-shot practice mode that shows the segment plus surrounding bars (no mask), inviting the user to play the segment back inside its musical neighbourhood. Addresses the phrase-level encoding concern at exactly the moment it becomes relevant — once the bit is locked, re-embed it in the piece.
+When the user rates a segment **Solid** for the first time, the app offers two complementary actions, either, both, or neither of which the user can choose:
+
+1. **Context pass.** A one-shot practice mode that shows the segment plus surrounding bars (no mask), inviting the user to play the segment back inside its musical neighbourhood. Addresses the phrase-level encoding concern at exactly the moment it becomes relevant — once the bit is locked, re-embed it in the piece.
+2. **Expand scope.** Grow this segment outward to include adjacent material. The app proposes a natural candidate expansion using bar detection (next beat, next bar, next phrase). On accept, the previous rects become a `ScopeStage` history entry; the user re-rates difficulty (defaulting to one step back).
+
+These map to the two pedagogically valid moves at this point: re-contextualise within the larger phrase, or chunk up to a larger unit of practice. Both are first-class — the design does not force a choice.
 
 ## 5. The heatmap (score map)
 
@@ -224,14 +260,30 @@ After capture, the user enters the segment editor for the new piece. Page manage
 
 ## 7. Segment editor
 
+The editor is the place where the "low-overhead, magic-minimum-taps" principle (§1b) lives or dies. Every step that requires manual precision or typing has a tap-saving suggestion sitting underneath.
+
+### 7.1 Manual primitives (always available)
+
 - View a page.
 - Draw a rectangle by drag.
 - Add another rectangle to the same segment (for multi-rect segments — cross-system phrases, key-sig context strips).
 - Edit rectangle bounds (drag handles).
-- **Auto-suggested context strip:** after the first rect is drawn, the app proposes adding a small rect at the start of the system covering clef + key sig + time sig. One tap to accept, one tap to dismiss, manual draw also fine.
 - Set difficulty, tags, notes, label.
-- Fill in optional **tempo marking, dynamic, expression note** (drives the practice-view caption strip).
+- Fill in optional tempo marking, dynamic, expression note.
+- **Expand scope:** add rects to grow the segment outward (records a `ScopeStage` history entry).
 - Delete segment.
+
+### 7.2 Automation (suggestion + one-tap-confirm)
+
+All v1 automation runs on-device using Vision and classical image processing. No model training, no cloud.
+
+- **System detection.** On page import, the app finds staff lines (five evenly-spaced horizontal lines per stave, grouped into systems). Used silently throughout: segments snap to system boundaries, the context strip is placed at the correct system's left edge.
+- **Bar detection.** Bar lines (tall vertical strokes between staves) are detected per system. When the user finishes drawing a segment rect, the app proposes snapping its left/right edges to the nearest bar lines. One tap to accept.
+- **Auto-context-strip.** When a segment is first drawn, the app automatically proposes a small additional rect at the left edge of that system covering clef, key sig, and time sig. One tap to accept; user can adjust handles or dismiss.
+- **Text OCR for markings.** Vision text recognition reads italic Italian words and dynamic letters near the segment, pre-filling the tempo / dynamic / expression caption fields. User confirms with a tap. (The OCR identifies *text*, not glyphs — we recognise the word "Largo" but not a treble clef symbol.)
+- **Expand-scope candidates.** When the user accepts "expand scope" on a Solid segment (§4.4), the app proposes a candidate larger rect using bar detection: typically "next bar" or "this bar + next bar". One tap to accept.
+
+Everything above is a suggestion overlaid on the manual primitive. If detection fails or the user disagrees, the manual flow is unchanged. The aim is that on a clean page photo, creating a usable segment with full musical context is two-or-three taps and no typing.
 
 ## 8. Architecture (Crux split)
 
@@ -304,9 +356,13 @@ Locke & Latham's specific-difficult-goal theory. The `goal` field is already in 
 
 Furuya et al. Adds a per-segment "hand focus" toggle in piano mode that masks half the grand staff. Practice attempts can record which hand was practiced.
 
-### OMR auto-segmentation (v3+)
+### Glyph recognition (v2)
 
-Pre-populate segments from a recognised score. The mask model already supports the output (rectangles per phrase), so OMR just changes the *input* to the segment editor. The rest of the app is unchanged.
+Recognising clef, key signature, and time signature as *semantic* data rather than just images. Requires a trained ML model (CoreML, on-device). Unlocks: searchable pieces by key, transposition-aware suggestions, and richer context-strip display when the strip is too small to read. v1 sidesteps by always showing the *image* of those glyphs in the context strip — adequate, but not parseable.
+
+### Full OMR auto-segmentation (v3+)
+
+Pre-populate segments from a recognised score (notes, beats, phrase boundaries). The mask model already supports the output (rectangles per phrase), so OMR just changes the *input* to the segment editor. The rest of the app is unchanged.
 
 ### Concert-prep dashboard (rejected)
 
