@@ -12,8 +12,21 @@ Motif is a **practice companion**, not a score reader and not a performance app.
 2. Show a bird's-eye **heatmap** of progress across the whole piece — where time has been spent, where the hard bits are, what's gone stale.
 3. **Schedule** practice so the hardest and most neglected segments rise to the top, eliminating the "play the intro over and over" and "play the easy bits and avoid the hard bits" failure modes.
 4. **Force focus** during practice by showing only the current segment, with an optional timer that nudges the user to move on when they're getting obsessed with a single passage.
+5. **Act as a jumping-off point** when the user is stuck — detect stalled segments and surface targeted exercise suggestions, so practicing this app prompts richer practice off-app.
 
-Out of scope for v1: OMR/auto-segmentation, performance-mode page turner, multi-instrument-specific features, social/sharing, memorisation drills, adaptive exercise suggestions. All of these are noted as future and have data-model hooks where appropriate.
+Out of scope for v1: OMR/auto-segmentation, performance-mode page turner, multi-instrument-specific features, social/sharing, memorisation drills, curated exercise content library, mental-practice mode, tempo gradation tools, performance-rehearsal pressure simulation. All have data-model hooks where appropriate.
+
+## 1a. Philosophy: tortoise, not hare
+
+The product has an opinionated philosophy that shapes every default: **you make faster overall progress by refusing to run before you can walk.** The common failure mode in self-directed instrumental practice is playing the whole piece at near-tempo from day one, getting through the easy bits, stumbling at the hard bits, and reinforcing exactly the wrong motor patterns. Motif's defaults all push in the opposite direction:
+
+- The guided session picks segments, not whole pieces.
+- The practice view shows one segment, full-screen, with the rest of the page blacked out — you literally cannot drift into the next bar.
+- The scheduler weights toward Struggling and stale segments, biasing time away from the bits that already feel comfortable.
+- Audio is recorded per-segment so the user can hear *progress on this fragment* across weeks — feedback that's invisible when you only ever play the whole piece.
+- The "context pass" (see §4) is offered only once a segment is Solid, so wider musical context is re-introduced *after* the bit is locked, not before.
+
+This is a values stance, not a neutral piece of UX. The honest research caveat is that this stance is more strongly supported by pedagogical tradition (Neuhaus, Whiteside, generations of teachers) than by controlled experimental studies — see §13.
 
 ## 2. Core concepts and data model
 
@@ -58,11 +71,20 @@ Segment {
   difficulty         // Struggling | Working | Solid | Mastered
   tags: [String]     // e.g. "octaves", "trill", "fingering", "rhythm"
   notes              // free text
+
+  // Musical-context metadata (displayed as a caption strip during practice,
+  // so info that lives elsewhere on the page is still present without
+  // needing the user to draw extra rects across distant parts of the score)
+  tempo_marking      // optional, e.g. "Largo", "Moderato"
+  dynamic_marking    // optional, e.g. "f pesante", "p"
+  expression_note    // optional, e.g. "dim.", "agitato"
+
   created_at
   practice_history: [PracticeAttempt]
 
   // v2/v3 hooks (present but unused in v1):
   memorisation_state // None | Learning | Memorised | Verified
+  goal               // optional free-text micro-goal, e.g. "hands together at 80bpm no stops"
 }
 ```
 
@@ -101,20 +123,42 @@ score(segment, now) =
   × under_invested_factor(total_time_spent(segment))
 ```
 
-- `difficulty_weight`: Struggling 4, Working 3, Solid 2, Mastered 1.
-- `staleness_factor`: monotonically increasing in days-since-last-practice, with a soft floor of 1 (a segment practiced today still has some score) and a cap to prevent ancient untouched segments from dominating forever.
+- `difficulty_weight`: Struggling 4, Working 3, Solid 2, **Mastered 1 (floor — never 0)**. Mastered segments stay in long-interval rotation per the overlearning literature; they are never zeroed out of consideration.
+- `staleness_factor`: monotonically increasing in days-since-last-practice, with a soft floor of 1 (a segment practiced today still has some score) and a cap to prevent ancient untouched segments from dominating forever. For Mastered segments specifically, the curve targets re-exposure at roughly 14 / 30 / 60-day intervals.
 - `under_invested_factor`: a small boost for segments with low total practice time, so the scheduler doesn't keep cycling the same five segments. Decays toward 1 once meaningful time has been spent.
 
 The exact curves are tunable constants; the design only requires the *shape*. v1 ships sensible defaults; we may expose them in settings later.
+
+### Interleaving (default on)
+
+The scheduler does not produce serial runs of segments from the same passage or piece. Two rules:
+
+1. **Across pieces:** when the user has more than one active piece, the queue mixes them — a session is typically not 5 segments from one piece but 3 + 2, 2 + 2 + 1, etc., subject to the top-scoring segments.
+2. **Within a piece:** when consecutive top-scoring segments are spatially adjacent on the page, the queue shuffles non-adjacent segments between them where score-equivalent options exist.
+
+This is grounded in the contextual-interference literature (Shea & Morgan 1979; Carter & Grahn 2016): blocked single-passage practice feels better in the moment but yields worse retention. The behaviour is configurable — power users can switch to blocked.
+
+### Stall detection
+
+The scheduler maintains a derived signal `stalled` on each segment, true when:
+
+- The segment has ≥ N practice attempts (default 6) over ≥ M weeks (default 2), **and**
+- Its difficulty has not improved in that window.
+
+Stall is a trigger, not a scoring input — it surfaces a card (see §4.3) suggesting targeted exercises drawn from a hard-coded tag → suggestion table. This is the v1 form of the "jumping-off point" feature.
 
 ### Guided session
 
 The default flow when the user taps **Practice now**:
 
-1. Scheduler picks the top N segments by score (default N = 5, configurable).
+1. Scheduler picks the top N segments by score (default N = 5, configurable), with interleaving rules applied.
 2. User is walked through them in order: masked segment shown, optional metronome/count-in, optional record button, optional focus timer (default 5 min).
 3. When the user moves on (or the timer nudges them and they accept), they get an optional self-rating prompt: *"Still hard / Getting easier / Solid / Mastered"*. Choosing one updates `segment.difficulty`. Skipping is fine.
 4. Session summary at the end: which segments worked, total time, difficulty changes.
+
+### Overrides (scaffolding fade)
+
+From day one the user can override the scheduler — build a custom session, pin specific segments, exclude a piece for today, switch interleaving off. This addresses the expertise-reversal concern (Kalyuga et al. 2003): heavy prescription helps beginners and hurts advanced users.
 
 ### Free browse
 
@@ -122,7 +166,9 @@ A parallel flow. From the heatmap / score map, the user can tap any segment and 
 
 ## 4. Practice view
 
-The practice view is the most opinionated screen in the app. Its design is shaped by the "force focus" goal:
+The practice view is the most opinionated screen in the app. Its design is shaped by the "force focus" goal.
+
+### 4.1 Strict isolation
 
 - **Isolated, not in-context.** The view shows the segment alone — the rectangles of the mask, composited tightly, on a black background. The rest of the page is not visible. The user *cannot* drift into the next bar by reading ahead, because there is no next bar visible.
 - **Big.** The mask is scaled to fill the screen.
@@ -130,6 +176,29 @@ The practice view is the most opinionated screen in the app. Its design is shape
 - **Playback:** the most recent take is one tap away; older takes available via a per-segment history panel.
 - **Focus timer (optional, default on at 5 min):** counts up while the segment is active. On expiry, a gentle non-blocking nudge: *"You've been on this for 5 minutes. One more pass, or move on?"* The user can extend, or accept the nudge and move to the next segment in the queue.
 - **No score navigation.** No swipe-to-next-page, no jump-to-bar. This is not a score reader.
+
+### 4.2 Musical context without breaking isolation
+
+Strict isolation creates a real problem: key signatures, time signatures, tempo markings, and dynamics often live elsewhere on the page. Two-part solution:
+
+- **Auto-suggested context strip.** When the user draws a segment in the editor, the app proposes a small additional rect at the start of the system covering the clef, key sig, and time sig. One tap to accept; user can adjust or skip. Uses the existing multi-rect mask model — no new structural concept.
+- **Caption strip.** A thin row *above* the masked segment shows the segment's metadata: `tempo_marking · dynamic_marking · expression_note` (e.g. "Largo · f pesante · dim."). These are typed in once during editing; they appear during every practice attempt. Decouples musical information from spatial position on the page — useful when the relevant marking is 14 inches away from the segment.
+
+Between the auto-context-strip rect and the caption strip, the segment-in-isolation view carries enough musical instruction to be practiced honestly without needing to flip back to the score.
+
+### 4.3 Stalled-segment nudge card
+
+When the segment's `stalled` signal is true (§3 Stall detection), the practice view shows a dismissible card on entry:
+
+> *"You've worked this segment 8 times over 3 weeks with no change. Try one of these:"*
+
+…followed by 2-3 short suggestions drawn from a hard-coded `tag → suggestions` table. For tag `octaves`: "Hands separate, half tempo, watch wrist height." For `trill`: "Slow trill from each note, gradually increase speed." For untagged segments: generic fallbacks (slow practice, hands separate for piano, isolate the hardest beat). The card links to a longer "Suggested exercises" view with more detail.
+
+The card is the v1 form of the "jumping-off point" — explicitly designed so the app is not a closed loop but a prompt back into richer off-app practice.
+
+### 4.4 Context pass on graduation
+
+When the user rates a segment **Solid** for the first time, the app offers an optional "context pass": a one-shot practice mode that shows the segment plus surrounding bars (no mask), inviting the user to play the segment back inside its musical neighbourhood. Addresses the phrase-level encoding concern at exactly the moment it becomes relevant — once the bit is locked, re-embed it in the piece.
 
 ## 5. The heatmap (score map)
 
@@ -159,7 +228,9 @@ After capture, the user enters the segment editor for the new piece. Page manage
 - Draw a rectangle by drag.
 - Add another rectangle to the same segment (for multi-rect segments — cross-system phrases, key-sig context strips).
 - Edit rectangle bounds (drag handles).
+- **Auto-suggested context strip:** after the first rect is drawn, the app proposes adding a small rect at the start of the system covering clef + key sig + time sig. One tap to accept, one tap to dismiss, manual draw also fine.
 - Set difficulty, tags, notes, label.
+- Fill in optional **tempo marking, dynamic, expression note** (drives the practice-view caption strip).
 - Delete segment.
 
 ## 8. Architecture (Crux split)
@@ -205,21 +276,41 @@ No server, no account, no backend in v1.
 
 ## 11. Future features (not in v1, but model-ready)
 
-### Memorisation (v2)
+### Mental-practice mode (v2)
+
+Brown & Palmer (2013); Pascual-Leone's plasticity work. Low-build-cost, strong evidence base. App prompts the user to mentally rehearse a segment without the instrument — segment shown, no recording, timed silent imagery, light self-rating after. Especially valuable away from the instrument (commute, bed).
+
+### Tempo gradation (v2)
+
+Allingham & Wöllner (2022) — *alternating* fast/slow tempo passes outperform monotonic ramps for piano scales. Per-segment metronome with a target tempo and a "tempo plan" (e.g. 60 → 80 → 60 → 100) executed across attempts.
+
+### Curated exercise library (v2)
+
+The v1 stalled-segment nudge ships with a small hard-coded tag → suggestion table. v2 expands this into a curated library — Hanon for octaves, Cortot for trills, Brahms 51 for polyrhythms, Czerny for runs — keyed by tag, optionally with embedded score snippets. Pure content curation, no engineering risk.
+
+### Memorisation drills (v2)
 
 Per-segment `memorisation_state` field already in the model. Adds a Memory Check practice mode: segment shown briefly, blanked, user plays from memory, self-rates *got it / hesitated / lost it*. Scheduler gets a second axis: Memorised segments earn periodic memory-check visits even when their difficulty is Solid. A "random start" drill picks a random bar within the segment.
 
-### Adaptive exercise suggestions (v2/v3)
+### Performance-rehearsal mode (v2)
 
-Driven by the existing tag system, not OMR. A curated tag → exercise-suggestion library: when a segment has been Struggling for >N sessions and is tagged `octaves`, surface a card suggesting hands-separate slow practice and a relevant etude. Pure content curation, no ML.
+Aufegger et al. (2017) and the pressure-simulation literature. Different from the (rejected) Concert Mode dashboard — this is a "play through the whole piece" mode that disables masks and timers, records continuously, optionally plays simulated audience audio. Fits the practice-companion positioning: you are rehearsing a performance, not performing one.
+
+### Per-segment SMART goals (v2)
+
+Locke & Latham's specific-difficult-goal theory. The `goal` field is already in the model; v2 wires it into the practice view as a small goal line ("today: hands together at 80bpm, no stops") and tracks whether the user reports the goal met.
+
+### Hands-separate mode (v2, piano-specific)
+
+Furuya et al. Adds a per-segment "hand focus" toggle in piano mode that masks half the grand staff. Practice attempts can record which hand was practiced.
 
 ### OMR auto-segmentation (v3+)
 
 Pre-populate segments from a recognised score. The mask model already supports the output (rectangles per phrase), so OMR just changes the *input* to the segment editor. The rest of the app is unchanged.
 
-### Concert prep mode (deferred indefinitely)
+### Concert-prep dashboard (rejected)
 
-Considered and rejected for v1 — pulled the product toward performance, away from practice. The natural pre-concert behaviour falls out of the existing heatmap and scheduler.
+Considered and rejected. Pulled the product toward performance, away from practice. The natural pre-concert behaviour falls out of the existing heatmap and scheduler.
 
 ## 12. Open questions for review
 
@@ -229,3 +320,34 @@ None blocking. The following are tunable constants that v1 will ship with sensib
 - Session size N (5 segments).
 - Auto-stop-on-silence threshold.
 - Scoring function constants (difficulty weights, staleness curve, under-invested boost shape).
+- Stall detection thresholds (default ≥ 6 attempts over ≥ 2 weeks, no difficulty change).
+- Mastered re-exposure intervals (default 14 / 30 / 60 days).
+
+## 13. Research notes and known tradeoffs
+
+The design has been reviewed against published music-education and motor-learning research. Most of the design is supported. Three places are worth flagging explicitly because the evidence is mixed, contradicting, or absent.
+
+### 13.1 What the evidence supports
+
+- **Segmenting and chunking.** Chaffin & Imreh (2002); Williamon & Valentine (2002). Expert pianists structure practice around bar-level chunks tied to retrieval cues. Motif's segment-first model is well-aligned.
+- **Slow practice.** Allingham & Wöllner (2022, *Psychology of Music*). Slow practice is near-ubiquitous among advanced musicians and aids motor accuracy. Supports the tortoise philosophy and the per-segment focus timer (which discourages racing through).
+- **Spaced re-exposure for motor skills.** Shea, Lai, Black & Park (2000); Walker et al. (2002). Cross-day spacing benefits motor learning; sleep consolidates it. Supports the staleness factor in the scheduler and the maintenance intervals for Mastered segments.
+- **Self-recording and audio feedback.** Daniel (2001); Hewitt (2001/2011). Improves self-assessment accuracy and performance. Supports the per-segment recording history.
+- **Targeted work over total time.** Ericsson, Krampe & Tesch-Römer (1993). Supports the scheduler's emphasis on Struggling segments — but see 13.3.
+
+### 13.2 Where the design is opinionated against the research
+
+- **Strict-isolation practice view vs phrase-level encoding.** Williamon & Valentine (2002) found pianists who segmented at structural/phrase boundaries gave the highest-rated performances. Blacking out surrounding music removes the visual frame the brain uses to embed a chunk in its musical context. The design accepts this tradeoff in service of the "force focus" goal (preventing drift into the next bar) and mitigates it with (a) the auto-context-strip (clef/key/time visible), (b) the caption strip (tempo/dynamic visible), and (c) the context pass on graduation to Solid (re-embed in the phrase once the bit is locked). This is a deliberate values choice, not an oversight.
+- **The "tortoise" philosophy.** Well supported by pedagogical tradition (Neuhaus, Whiteside, generations of teachers); less well supported by controlled experimental studies. The argument that errors practised at speed "ingrain" is more clinical observation than RCT. Motif builds the philosophy in as the default but allows full override (custom sessions, disabled timer, blocked practice mode).
+
+### 13.3 What the evidence complicates or undermines
+
+- **Deliberate practice as a single explanation is overstated.** Macnamara, Hambrick & Oswald (2014, *Psychological Science*) meta-analysis found deliberate practice accounts for ~21% of variance in music performance — meaningful but not deterministic. The app's framing should not promise mastery from time-on-app alone.
+- **Self-rating accuracy is suspect.** Dunning–Kruger (1999) and Hewitt (2002) — students who struggle most are least accurate at self-assessing. The scheduler's primary input layer (the Struggling/Working/Solid/Mastered label) is noisiest precisely where it matters most. v1 mitigation: the under-invested boost and the stall detector both use *objective* signals (time, attempt count, difficulty-change history) so the scheduler is not 100% reliant on self-labels. v2 candidates: recording-based pitch/timing analysis, scheduled re-tests.
+- **Blocked single-piece practice is worse for retention** than interleaved practice (Shea & Morgan 1979; Carter & Grahn 2016, *Frontiers in Psychology*). Addressed by the default interleaving rules in §3.
+- **Mastered ≠ done.** Driskell, Willis & Copper (1992) on overlearning and Bahrick's long-term retention work — maintenance practice is required. Addressed by the Mastered floor in the scoring function (never zero) and the long-interval re-exposure curve.
+- **Autonomy and intrinsic motivation matter.** Evans (2015, *Psychology of Music*); Deci, Koestner & Ryan (1999). Prescriptive scheduling and gamification can shift locus-of-causality to external and reduce long-term engagement. Mitigations: (a) overrides surfaced from day one (§3), (b) the heatmap is a progress visualisation, *not* gamification — no streaks, no badges, no loss-aversion mechanics, (c) the scaffolding-fade principle.
+
+### 13.4 What's missing from v1 and why
+
+These are all evidence-supported features deferred to v2, listed in §11 with their evidence base: mental practice, tempo gradation, performance-rehearsal mode, hands-separate mode, per-segment SMART goals. The v1 data model accommodates each so adoption is a UI and content effort, not a re-architecture.
