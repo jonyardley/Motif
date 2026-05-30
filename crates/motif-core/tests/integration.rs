@@ -158,8 +158,9 @@ fn under_invested_boost_does_not_crowd_out_stale_mastered() {
     // editor "set initial difficulty" edge case — but worth revisiting if it
     // becomes common.
     //
-    // Numerically:
-    //   fresh Mastered (1 day ago, 5 min spent) = 1.0 × 0.2 × 1.5 = 0.3
+    // Numerically (under_invested boundary is `minutes < 5.0`, so 5.0 itself
+    // falls into the next bucket at 1.2x):
+    //   fresh Mastered (1 day ago, 5 min spent) = 1.0 × 0.2 × 1.2 = 0.24
     //   stale Mastered (60 days ago, 35 min spent) = 1.0 × 2.0 × 1.0 = 2.0
     // Stale wins comfortably.
     let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
@@ -169,7 +170,7 @@ fn under_invested_boost_does_not_crowd_out_stale_mastered() {
         id: AttemptId("a-fresh".into()),
         segment_id: SegmentId("fresh".into()),
         started_at: now - Duration::days(1),
-        duration_seconds: 60 * 5, // 5 minutes — under-invested boost still applies
+        duration_seconds: 60 * 5, // 5 minutes — lands in the 1.2x under-invested bucket
         recording_ref: None,
         self_rating_after: None,
     });
