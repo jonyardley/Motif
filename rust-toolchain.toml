@@ -1,0 +1,6 @@
+# Single source of truth for the toolchain — local builds and CI both use this.
+# Bump deliberately in its own PR.
+[toolchain]
+channel = "1.93.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
