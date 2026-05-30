@@ -17,8 +17,8 @@ heatmap of the whole piece.
 Two opinionated principles drive every default (see `docs/.../motif-design.md` §1a/§1b):
 
 - **Tortoise, not hare** — bias toward slow, locked-in work on small chunks before
-  larger ones. The scheduler weights toward Struggling/stale segments; the practice
-  view shows one segment full-screen with everything else blacked out.
+  larger ones. The scheduler weights toward earlier-stage and stale segments; the
+  practice view shows one segment full-screen with everything else blacked out.
 - **Low-overhead, magic-minimum-taps** — segment setup should be 2–3 taps and no
   typing, using on-device Vision + classical CV (never deep-learning OMR in v1).
 
@@ -80,9 +80,10 @@ docs/superpowers/
   `SegmentId`, `AttemptId`) passed in by the shell. Newtypes use
   `#[serde(transparent)]` so they serialise as bare strings.
 - All model types derive `Serialize`/`Deserialize` and roundtrip through JSON.
-- v2/v3 fields (`memorisation_state`, `goal`, `scope_history`) live in the v1 model as
-  hooks but are unused by the v1 scheduler. Use `#[serde(default)]` for fields added as
-  forward-compat hooks.
+- v2/v3 fields (`memorisation_state`, `goal`) live in the v1 model as hooks but are
+  unused by the v1 scheduler. `memorisation_state` carries `#[serde(default)]` so older
+  persisted JSON still deserialises; use the same attribute for any future forward-compat
+  hook.
 
 ### Core domain concepts (from design §2–§3)
 
@@ -90,10 +91,15 @@ docs/superpowers/
 - **Segment** = a practice unit: a *mask* of one or more `Rect`s (page-relative coords)
   plus practice state (`difficulty`, `tags`, caption metadata, `practice_history`,
   `scope_history`).
-- **Difficulty**: `Struggling | Working | Solid | Mastered`. Scheduler weights are
-  4 / 3 / 2 / **1 (floor — never 0)**, so Mastered stays in long-interval rotation.
+- **Difficulty** (positive-framing journey, design §2.2): `Fresh | Learning | Shaping |
+  Confident | PerformanceReady`. `Fresh` is an internal initial state (auto-assigned at
+  construction, auto-transitions to `Learning` on the first recorded attempt — never
+  user-picked). Scheduler weights: `Fresh` and `Learning` both **4.0**, `Shaping` 3.0,
+  `Confident` 2.0, `PerformanceReady` **1.0 (floor — never 0)**, so a performance-ready
+  segment stays in long-interval rotation.
 - **Scoring**: `score = difficulty_weight × staleness_factor × under_invested_factor`.
-  Mastered segments use a separate staleness curve targeting ~14/30/60-day re-exposure.
+  `PerformanceReady` segments use `staleness_factor_performance_ready`, a separate curve
+  targeting ~14/30/60-day re-exposure.
 - **pick_session** applies cross-piece interleaving (avoid consecutive segments from the
   same piece when a score-equivalent alternative exists).
 - **Scope evolution** (`expand_scope`): growing a segment's kernel outward archives the
