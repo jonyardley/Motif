@@ -7,7 +7,7 @@ use motif_core::model::{
     AttemptId, Difficulty, MemorisationState, PageId, Piece, PieceId, PracticeAttempt, Rect,
     Segment, SegmentId,
 };
-use motif_core::scheduler::pick_session;
+use motif_core::scheduler::{pick_session, score};
 use motif_core::stall::is_stalled;
 
 fn make_segment(id: &str, piece: &str, difficulty: Difficulty) -> Segment {
@@ -125,44 +125,70 @@ fn stalled_segment_in_realistic_three_week_history() {
 }
 
 #[test]
-fn piece_with_segments_roundtrips_through_json() {
+fn piece_with_pages_and_evolved_segments_roundtrips_through_json() {
+    // Behavioural roundtrip: a real-world-shaped Piece (with a Page and a Segment
+    // whose scope has evolved) survives serde JSON serialisation. Complements the
+    // unit test in model.rs by exercising the scope_history field across the
+    // crate boundary.
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+
+    let mut evolved_segment = make_segment("seg-evolved", "p1", Difficulty::Solid);
+    // Simulate a chunk-up: kernel grew to a wider rect, with the original archived.
+    evolved_segment.expand_scope(
+        vec![Rect {
+            page_id: PageId("page-1".into()),
+            x: 0.0,
+            y: 0.0,
+            w: 300.0,
+            h: 50.0,
+        }],
+        now,
+        true,
+    );
+
     let piece = Piece {
         id: PieceId("p1".into()),
         title: "Test Piece".into(),
-        composer: None,
+        composer: Some("J. S. Bach".into()),
         created_at: now,
-        pages: vec![],
+        pages: vec![motif_core::model::Page {
+            id: PageId("page-1".into()),
+            index: 0,
+            image_ref: "file://page-1.jpg".into(),
+            width: 1500,
+            height: 2000,
+        }],
         segments: vec![
-            make_segment("s1", "p1", Difficulty::Struggling),
-            make_segment("s2", "p1", Difficulty::Solid),
+            make_segment("s-struggling", "p1", Difficulty::Struggling),
+            evolved_segment,
         ],
     };
+
     let json = serde_json::to_string(&piece).unwrap();
     let back: Piece = serde_json::from_str(&json).unwrap();
     assert_eq!(back, piece);
+    // Specifically confirm scope_history made it through.
+    assert_eq!(back.segments[1].scope_history.len(), 1);
 }
 
 #[test]
 fn under_invested_boost_does_not_crowd_out_stale_mastered() {
     // Operational invariant: a Mastered segment that has been kept in long-interval
-    // rotation (60+ days since last practice, time invested) should outscore a
-    // Mastered segment that was rated Mastered just yesterday with little time
-    // invested. The under-invested boost must not let new-Mastered crowd out
-    // stale-Mastered.
+    // rotation should outscore a Mastered segment that was rated Mastered just
+    // yesterday with little time invested. The under-invested boost must not let
+    // new-Mastered crowd out stale-Mastered.
     //
-    // Note for v2: a Mastered segment with *no* practice history at all is a
+    // Asserts the *ratio* (stale dominates by at least 4x) rather than the exact
+    // numbers, so the invariant survives plausible future scoring refinements
+    // (e.g. tweaking the under-invested curve or extending the Mastered staleness
+    // cap) as long as the qualitative property still holds.
+    //
+    // Note for v2: a Mastered segment with no practice history at all is a
     // semantically odd state (the user marked it Mastered without ever practising)
     // and the current scoring treats it as fully stale via the 10_000-day sentinel.
     // That's defensible in v1 — Mastered + zero history is unlikely outside an
     // editor "set initial difficulty" edge case — but worth revisiting if it
     // becomes common.
-    //
-    // Numerically (under_invested boundary is `minutes < 5.0`, so 5.0 itself
-    // falls into the next bucket at 1.2x):
-    //   fresh Mastered (1 day ago, 5 min spent) = 1.0 × 0.2 × 1.2 = 0.24
-    //   stale Mastered (60 days ago, 35 min spent) = 1.0 × 2.0 × 1.0 = 2.0
-    // Stale wins comfortably.
     let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
 
     let mut fresh_mastered = make_segment("fresh", "piece", Difficulty::Mastered);
@@ -179,12 +205,21 @@ fn under_invested_boost_does_not_crowd_out_stale_mastered() {
     stale_mastered.record_attempt(PracticeAttempt {
         id: AttemptId("a-stale".into()),
         segment_id: SegmentId("stale".into()),
-        started_at: now - Duration::days(60),
-        duration_seconds: 60 * 35, // 35 minutes — above the under-invested threshold
+        started_at: now - Duration::days(90), // deep in the long-rotation regime
+        duration_seconds: 60 * 35,            // 35 minutes — above the under-invested threshold
         recording_ref: None,
         self_rating_after: None,
     });
 
+    let fresh_score = score(&fresh_mastered, now);
+    let stale_score = score(&stale_mastered, now);
+
+    assert!(
+        stale_score >= fresh_score * 4.0,
+        "stale Mastered should dominate fresh Mastered by at least 4x; got stale={stale_score}, fresh={fresh_score}",
+    );
+
+    // Also assert the operational consequence: the picker picks the stale one.
     let picked = pick_session(&[fresh_mastered, stale_mastered], 1, now);
     assert_eq!(picked, vec![SegmentId("stale".into())]);
 }

@@ -8,6 +8,3 @@ description = "Pure-Rust core for the Motif practice companion app"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
-
-[dev-dependencies]
-uuid = { version = "1", features = ["v4"] }
