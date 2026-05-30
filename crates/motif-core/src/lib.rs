@@ -3,4 +3,5 @@
 
 pub mod model;
 pub mod scheduler;
+pub mod scope;
 pub mod stall;
