@@ -156,6 +156,35 @@ impl Segment {
             last.self_rating_after = Some(rating);
         }
     }
+
+    /// Construct a new Segment with sensible defaults: difficulty `Working`,
+    /// empty tags / notes / scope_history / practice_history, no caption metadata,
+    /// `MemorisationState::None`, no goal. Caller supplies the identity, the
+    /// piece it belongs to, its rect mask, and the creation timestamp.
+    pub fn new(
+        id: SegmentId,
+        piece_id: PieceId,
+        rects: Vec<Rect>,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        Segment {
+            id,
+            piece_id,
+            label: None,
+            rects,
+            difficulty: Difficulty::Working,
+            tags: Vec::new(),
+            notes: String::new(),
+            tempo_marking: None,
+            dynamic_marking: None,
+            expression_note: None,
+            scope_history: Vec::new(),
+            created_at,
+            practice_history: Vec::new(),
+            memorisation_state: MemorisationState::None,
+            goal: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,6 +196,20 @@ pub struct Page {
     pub height: u32,
 }
 
+impl Page {
+    /// Construct a new Page. `image_ref` is an opaque shell-supplied handle
+    /// (e.g. a file URI) — the core never reads the actual image.
+    pub fn new(id: PageId, index: u32, image_ref: String, width: u32, height: u32) -> Self {
+        Page {
+            id,
+            index,
+            image_ref,
+            width,
+            height,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Piece {
     pub id: PieceId,
@@ -175,6 +218,26 @@ pub struct Piece {
     pub created_at: DateTime<Utc>,
     pub pages: Vec<Page>,
     pub segments: Vec<Segment>,
+}
+
+impl Piece {
+    /// Construct a new Piece with no pages and no segments yet. Pages are added
+    /// after capture; segments are added by the segment editor.
+    pub fn new(
+        id: PieceId,
+        title: String,
+        composer: Option<String>,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        Piece {
+            id,
+            title,
+            composer,
+            created_at,
+            pages: Vec::new(),
+            segments: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -403,5 +466,54 @@ mod tests {
         let mut s = make_segment("s1", "p1", Difficulty::Struggling);
         s.self_rate(Difficulty::Solid);
         assert_eq!(s.difficulty, Difficulty::Solid);
+    }
+
+    #[test]
+    fn segment_new_uses_working_difficulty_and_empty_collections() {
+        let now = DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let s = Segment::new(
+            SegmentId("s1".into()),
+            PieceId("p1".into()),
+            vec![Rect {
+                page_id: PageId("page-1".into()),
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            }],
+            now,
+        );
+        assert_eq!(s.difficulty, Difficulty::Working);
+        assert!(s.tags.is_empty());
+        assert!(s.notes.is_empty());
+        assert!(s.scope_history.is_empty());
+        assert!(s.practice_history.is_empty());
+        assert_eq!(s.memorisation_state, MemorisationState::None);
+        assert_eq!(s.goal, None);
+        assert_eq!(s.rects.len(), 1);
+        assert_eq!(s.created_at, now);
+    }
+
+    #[test]
+    fn page_new_constructs_directly() {
+        let p = Page::new(PageId("pg".into()), 0, "file://x.jpg".into(), 1500, 2000);
+        assert_eq!(p.index, 0);
+        assert_eq!(p.width, 1500);
+        assert_eq!(p.height, 2000);
+        assert_eq!(p.image_ref, "file://x.jpg");
+    }
+
+    #[test]
+    fn piece_new_is_empty_until_pages_or_segments_added() {
+        let now = DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let p = Piece::new(PieceId("pc".into()), "Test".into(), None, now);
+        assert!(p.pages.is_empty());
+        assert!(p.segments.is_empty());
+        assert_eq!(p.composer, None);
+        assert_eq!(p.created_at, now);
     }
 }
