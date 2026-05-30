@@ -2,3 +2,4 @@
 //! scope evolution, and stall detection. No platform dependencies.
 
 pub mod model;
+pub mod scheduler;
