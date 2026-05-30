@@ -100,6 +100,33 @@ pub struct ScopeStage {
     pub promoted_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Segment {
+    pub id: SegmentId,
+    pub piece_id: PieceId,
+    pub label: Option<String>,
+    pub rects: Vec<Rect>,
+    pub difficulty: Difficulty,
+    pub tags: Vec<String>,
+    pub notes: String,
+
+    // Caption-strip metadata (driving the practice view's text caption)
+    pub tempo_marking: Option<String>,
+    pub dynamic_marking: Option<String>,
+    pub expression_note: Option<String>,
+
+    // Scope evolution
+    pub scope_history: Vec<ScopeStage>,
+
+    pub created_at: DateTime<Utc>,
+    pub practice_history: Vec<PracticeAttempt>,
+
+    // v2/v3 model hooks (unused in v1 scheduler)
+    #[serde(default)]
+    pub memorisation_state: MemorisationState,
+    pub goal: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +201,34 @@ mod tests {
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: ScopeStage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
+    }
+
+    fn make_segment(id: &str, piece: &str, difficulty: Difficulty) -> Segment {
+        Segment {
+            id: SegmentId(id.into()),
+            piece_id: PieceId(piece.into()),
+            label: None,
+            rects: vec![],
+            difficulty,
+            tags: vec![],
+            notes: String::new(),
+            tempo_marking: None,
+            dynamic_marking: None,
+            expression_note: None,
+            scope_history: vec![],
+            created_at: DateTime::parse_from_rfc3339("2026-05-29T00:00:00Z").unwrap().with_timezone(&Utc),
+            practice_history: vec![],
+            memorisation_state: MemorisationState::None,
+            goal: None,
+        }
+    }
+
+    #[test]
+    fn segment_roundtrips() {
+        let s = make_segment("s1", "p1", Difficulty::Working);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Segment = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
     }
 }
