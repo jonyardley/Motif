@@ -70,16 +70,13 @@ impl Difficulty {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemorisationState {
+    #[default]
     None,
     Learning,
     Memorised,
     Verified,
-}
-
-impl Default for MemorisationState {
-    fn default() -> Self { MemorisationState::None }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
