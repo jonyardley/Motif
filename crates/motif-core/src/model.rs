@@ -92,6 +92,14 @@ pub struct PracticeAttempt {
     pub self_rating_after: Option<Difficulty>,
 }
 
+/// A historical snapshot of a segment's scope before it was expanded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScopeStage {
+    pub rects: Vec<Rect>,
+    pub difficulty_at_promotion: Difficulty,
+    pub promoted_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +163,17 @@ mod tests {
         let json = serde_json::to_string(&a).unwrap();
         let back: PracticeAttempt = serde_json::from_str(&json).unwrap();
         assert_eq!(back, a);
+    }
+
+    #[test]
+    fn scope_stage_roundtrips() {
+        let s = ScopeStage {
+            rects: vec![Rect { page_id: PageId("p1".into()), x: 0.0, y: 0.0, w: 10.0, h: 10.0 }],
+            difficulty_at_promotion: Difficulty::Solid,
+            promoted_at: DateTime::parse_from_rfc3339("2026-05-29T10:00:00Z").unwrap().with_timezone(&Utc),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: ScopeStage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
     }
 }
