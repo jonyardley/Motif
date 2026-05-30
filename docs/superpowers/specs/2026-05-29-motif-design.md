@@ -22,9 +22,9 @@ The product has an opinionated philosophy that shapes every default: **you make 
 
 - The guided session picks segments, not whole pieces.
 - The practice view shows one segment, full-screen, with the rest of the page blacked out — you literally cannot drift into the next bar.
-- The scheduler weights toward Struggling and stale segments, biasing time away from the bits that already feel comfortable.
+- The scheduler weights toward Learning and stale segments, biasing time away from the bits that already feel comfortable.
 - Audio is recorded per-segment so the user can hear *progress on this fragment* across weeks — feedback that's invisible when you only ever play the whole piece.
-- The "context pass" (see §4) is offered only once a segment is Solid, so wider musical context is re-introduced *after* the bit is locked, not before.
+- The "context pass" (see §4) is offered only once a segment is Confident, so wider musical context is re-introduced *after* the bit is locked, not before.
 
 This is a values stance, not a neutral piece of UX. The honest research caveat is that this stance is more strongly supported by pedagogical tradition (Neuhaus, Whiteside, generations of teachers) than by controlled experimental studies — see §13.
 
@@ -72,7 +72,7 @@ Segment {
   piece_id
   label              // optional human name, e.g. "Largo opening"
   rects: [Rect]      // current scope: each rect is { page_id, x, y, w, h } in page-relative coords
-  difficulty         // Struggling | Working | Solid | Mastered
+  difficulty         // Fresh | Learning | Shaping | Confident | PerformanceReady
   tags: [String]     // e.g. "octaves", "trill", "fingering", "rhythm"
   notes              // free text
 
@@ -112,7 +112,7 @@ Notes on the mask model:
 A segment is not fixed in size for its lifetime. A common and pedagogically valid practice pattern is:
 
 1. Start with a tiny scope — a single beat with a complex figure, a single bar with an awkward leap.
-2. Practice it until it's Solid.
+2. Practice it until it's Confident.
 3. **Expand** the scope outward — to two beats, to a bar, to two bars, to a phrase.
 4. Repeat.
 
@@ -121,7 +121,7 @@ This is "chunking up": the kernel is locked, then it's re-contextualised by enla
 - The Segment's `rects` field is its **current scope**.
 - `scope_history` records every previous scope state, the difficulty rating at the moment of promotion, and the timestamp.
 - The Segment's identity is stable across scope changes — practice_history travels with it, so the user sees the chunking-up story per segment: "started as beat 3, became bar 1, became bars 1-2; took 12 / 8 / 5 sessions per stage."
-- On expansion, the user is prompted to re-rate difficulty (default: drop one step — Solid → Working). The previous rating is preserved in the `ScopeStage`.
+- On expansion, the user is prompted to re-rate difficulty (default: drop one step — e.g. Confident → Shaping). The previous rating is preserved in the `ScopeStage`. The `Fresh` state and the `Learning` state both saturate (dropping a `Learning` segment stays `Learning`; you can't become more new than you already are).
 
 The heatmap can visualise scope evolution as concentric outlines (defer to v2 if visually noisy) — the "kernel" you started from is still visible inside the current envelope.
 
@@ -136,12 +136,28 @@ PracticeAttempt {
   started_at
   duration_seconds
   recording_ref        // optional; opaque handle to audio file
-  self_rating_after    // optional: Struggling | Working | Solid | Mastered
-                       // — updates the segment's difficulty when present
+  self_rating_after    // optional: Learning | Shaping | Confident | PerformanceReady
+                       // — updates the segment's difficulty when present.
+                       // Fresh is not a valid user rating (it's the auto-assigned
+                       // initial state, never user-picked).
 }
 ```
 
 All attempts are retained by default so the user can scroll their audio history per segment over weeks/months.
+
+### 2.2 Difficulty states and auto-transition
+
+The difficulty enum has five values, ordered from "earliest in the journey" to "concert-ready":
+
+1. **Fresh** — auto-assigned when a segment is first created; the user has not yet practised it. Neutral colour in the heatmap (grey-blue rather than warm), distinct visual identity from Learning. Never user-picked.
+2. **Learning** — actively working on it; not yet fluent. The first state any segment can be rated by the user.
+3. **Shaping** — fluent enough to play through; now polishing, refining, internalising.
+4. **Confident** — reliable in normal practice; can play it without thinking too hard about the notes.
+5. **Performance-Ready** — concert-ready; would do it on stage.
+
+**Auto-transition Fresh → Learning** happens the moment the first practice attempt is recorded against the segment. After that, all difficulty changes are explicit user actions (chip taps, the graduation prompt). The user never picks Fresh — it's only ever an initial-state marker.
+
+This phrasing is deliberate. "Struggling" was demotivating for early-stage segments where struggle is the literal definition of the state. "Learning" is honest about what's happening and emotionally neutral. "Performance-Ready" is honest about the bar Mastered was trying to describe — mastery is never really achieved, but a piece being concert-ready is a real, observable bar.
 
 ## 3. The scheduler
 
@@ -154,8 +170,8 @@ score(segment, now) =
   × under_invested_factor(total_time_spent(segment))
 ```
 
-- `difficulty_weight`: Struggling 4, Working 3, Solid 2, **Mastered 1 (floor — never 0)**. Mastered segments stay in long-interval rotation per the overlearning literature; they are never zeroed out of consideration.
-- `staleness_factor`: monotonically increasing in days-since-last-practice, with a soft floor of 1 (a segment practiced today still has some score) and a cap to prevent ancient untouched segments from dominating forever. For Mastered segments specifically, the curve targets re-exposure at roughly 14 / 30 / 60-day intervals.
+- `difficulty_weight`: **Fresh 4, Learning 4, Shaping 3, Confident 2, Performance-Ready 1 (floor — never 0)**. Fresh and Learning share the highest weight: both deserve attention, the difference between them is whether you've worked the segment yet (an emotional and visual distinction, not a scheduling one — the existing `under_invested_factor` naturally surfaces Fresh segments further via the no-time-invested boost). Performance-Ready segments stay in long-interval rotation per the overlearning literature; they are never zeroed out of consideration.
+- `staleness_factor`: monotonically increasing in days-since-last-practice, with a soft floor of 1 (a segment practiced today still has some score) and a cap to prevent ancient untouched segments from dominating forever. For Performance-Ready segments specifically, the curve targets re-exposure at roughly 14 / 30 / 60-day intervals.
 - `under_invested_factor`: a small boost for segments with low total practice time, so the scheduler doesn't keep cycling the same five segments. Decays toward 1 once meaningful time has been spent.
 
 The exact curves are tunable constants; the design only requires the *shape*. v1 ships sensible defaults; we may expose them in settings later.
@@ -184,7 +200,7 @@ The default flow when the user taps **Practice now**:
 
 1. Scheduler picks the top N segments by score (default N = 5, configurable), with interleaving rules applied.
 2. User is walked through them in order: masked segment shown, optional metronome/count-in, optional record button, optional focus timer (default 5 min).
-3. When the user moves on (or the timer nudges them and they accept), they get an optional self-rating prompt: *"Still hard / Getting easier / Solid / Mastered"*. Choosing one updates `segment.difficulty`. Skipping is fine.
+3. When the user moves on (or the timer nudges them and they accept), they get an optional self-rating prompt with four chips: *Learning · Shaping · Confident · Performance-Ready*. Choosing one updates `segment.difficulty`. Skipping is fine.
 4. Session summary at the end: which segments worked, total time, difficulty changes.
 
 ### Overrides (scaffolding fade)
@@ -229,7 +245,7 @@ The card is the v1 form of the "jumping-off point" — explicitly designed so th
 
 ### 4.4 Graduation prompt — context pass and scope expansion
 
-When the user rates a segment **Solid** for the first time, the app offers two complementary actions, either, both, or neither of which the user can choose:
+When the user rates a segment **Confident** for the first time, the app offers two complementary actions, either, both, or neither of which the user can choose:
 
 1. **Context pass.** A one-shot practice mode that shows the segment plus surrounding bars (no mask), inviting the user to play the segment back inside its musical neighbourhood. Addresses the phrase-level encoding concern at exactly the moment it becomes relevant — once the bit is locked, re-embed it in the piece.
 2. **Expand scope.** Grow this segment outward to include adjacent material. The app proposes a natural candidate expansion using bar detection (next beat, next bar, next phrase). On accept, the previous rects become a `ScopeStage` history entry; the user re-rates difficulty (defaulting to one step back).
@@ -241,8 +257,8 @@ These map to the two pedagogically valid moves at this point: re-contextualise w
 The other opinionated screen. This is the planning and motivation view.
 
 - **Layout:** the whole piece rendered as a long scrollable strip (or grid) of page thumbnails, with each segment shown as its actual mask region overlaid on the real notes. The user recognises "the bit with the scary chromatic run" by sight, not by abstract symbols.
-- **Colour axis (default): mastery.** Struggling red → Working amber → Solid green → Mastered deep green.
-- **Opacity / desaturation: staleness.** A Solid segment untouched for three weeks fades toward grey-green — visual cue that "you nailed this once, but is it still there?"
+- **Colour axis (default): progress.** Fresh grey-blue → Learning red → Shaping amber → Confident green → Performance-Ready deep green. The grey-blue of Fresh is deliberately neutral — it reads as "awaiting work" rather than "failing".
+- **Opacity / desaturation: staleness.** A Confident segment untouched for three weeks fades toward grey-green — visual cue that "you nailed this once, but is it still there?"
 - **Subtle density indicator: time invested.** Small dots, a thickness, or similar showing total practice minutes. Lets the user spot "I've poured an hour into this and it's still red" and "I've barely touched this and it's already green."
 - **Toggle overlays:** chips at the top *promote* a secondary axis to be the primary colour. In the default view, mastery is the colour and staleness rides on opacity; switching to "Staleness" makes staleness the colour (red = haven't touched in weeks) and drops the opacity encoding. Same logic for Time invested and Recent trend (improving / flat / regressing). Same layout, four lenses on the same underlying data.
 - **Untagged regions** (areas of the page with no segment drawn) display as the plain score — natural contrast between practiced material and the rest.
@@ -281,7 +297,7 @@ All v1 automation runs on-device using Vision and classical image processing. No
 - **Bar detection.** Bar lines (tall vertical strokes between staves) are detected per system. When the user finishes drawing a segment rect, the app proposes snapping its left/right edges to the nearest bar lines. One tap to accept.
 - **Auto-context-strip.** When a segment is first drawn, the app automatically proposes a small additional rect at the left edge of that system covering clef, key sig, and time sig. One tap to accept; user can adjust handles or dismiss.
 - **Text OCR for markings.** Vision text recognition reads italic Italian words and dynamic letters near the segment, pre-filling the tempo / dynamic / expression caption fields. User confirms with a tap. (The OCR identifies *text*, not glyphs — we recognise the word "Largo" but not a treble clef symbol.)
-- **Expand-scope candidates.** When the user accepts "expand scope" on a Solid segment (§4.4), the app proposes a candidate larger rect using bar detection: typically "next bar" or "this bar + next bar". One tap to accept.
+- **Expand-scope candidates.** When the user accepts "expand scope" on a Confident segment (§4.4), the app proposes a candidate larger rect using bar detection: typically "next bar" or "this bar + next bar". One tap to accept.
 
 Everything above is a suggestion overlaid on the manual primitive. If detection fails or the user disagrees, the manual flow is unchanged. The aim is that on a clean page photo, creating a usable segment with full musical context is two-or-three taps and no typing.
 
@@ -377,7 +393,7 @@ The v1 stalled-segment nudge ships with a small hard-coded tag → suggestion ta
 
 ### Memorisation drills (v2)
 
-Per-segment `memorisation_state` field already in the model. Adds a Memory Check practice mode: segment shown briefly, blanked, user plays from memory, self-rates *got it / hesitated / lost it*. Scheduler gets a second axis: Memorised segments earn periodic memory-check visits even when their difficulty is Solid. A "random start" drill picks a random bar within the segment.
+Per-segment `memorisation_state` field already in the model. Adds a Memory Check practice mode: segment shown briefly, blanked, user plays from memory, self-rates *got it / hesitated / lost it*. Scheduler gets a second axis: Memorised segments earn periodic memory-check visits even when their difficulty is Confident. A "random start" drill picks a random bar within the segment.
 
 ### Performance-rehearsal mode (v2)
 
@@ -412,7 +428,7 @@ None blocking. The following are tunable constants that v1 will ship with sensib
 - Auto-stop-on-silence threshold.
 - Scoring function constants (difficulty weights, staleness curve, under-invested boost shape).
 - Stall detection thresholds (default ≥ 6 attempts over ≥ 2 weeks, no difficulty change).
-- Mastered re-exposure intervals (default 14 / 30 / 60 days).
+- Performance-Ready re-exposure intervals (default 14 / 30 / 60 days).
 
 ## 13. Research notes and known tradeoffs
 
@@ -422,21 +438,21 @@ The design has been reviewed against published music-education and motor-learnin
 
 - **Segmenting and chunking.** Chaffin & Imreh (2002); Williamon & Valentine (2002). Expert pianists structure practice around bar-level chunks tied to retrieval cues. Motif's segment-first model is well-aligned.
 - **Slow practice.** Allingham & Wöllner (2022, *Psychology of Music*). Slow practice is near-ubiquitous among advanced musicians and aids motor accuracy. Supports the tortoise philosophy and the per-segment focus timer (which discourages racing through).
-- **Spaced re-exposure for motor skills.** Shea, Lai, Black & Park (2000); Walker et al. (2002). Cross-day spacing benefits motor learning; sleep consolidates it. Supports the staleness factor in the scheduler and the maintenance intervals for Mastered segments.
+- **Spaced re-exposure for motor skills.** Shea, Lai, Black & Park (2000); Walker et al. (2002). Cross-day spacing benefits motor learning; sleep consolidates it. Supports the staleness factor in the scheduler and the maintenance intervals for Performance-Ready segments.
 - **Self-recording and audio feedback.** Daniel (2001); Hewitt (2001/2011). Improves self-assessment accuracy and performance. Supports the per-segment recording history.
-- **Targeted work over total time.** Ericsson, Krampe & Tesch-Römer (1993). Supports the scheduler's emphasis on Struggling segments — but see 13.3.
+- **Targeted work over total time.** Ericsson, Krampe & Tesch-Römer (1993). Supports the scheduler's emphasis on Learning segments — but see 13.3.
 
 ### 13.2 Where the design is opinionated against the research
 
-- **Strict-isolation practice view vs phrase-level encoding.** Williamon & Valentine (2002) found pianists who segmented at structural/phrase boundaries gave the highest-rated performances. Blacking out surrounding music removes the visual frame the brain uses to embed a chunk in its musical context. The design accepts this tradeoff in service of the "force focus" goal (preventing drift into the next bar) and mitigates it with (a) the auto-context-strip (clef/key/time visible), (b) the caption strip (tempo/dynamic visible), and (c) the context pass on graduation to Solid (re-embed in the phrase once the bit is locked). This is a deliberate values choice, not an oversight.
+- **Strict-isolation practice view vs phrase-level encoding.** Williamon & Valentine (2002) found pianists who segmented at structural/phrase boundaries gave the highest-rated performances. Blacking out surrounding music removes the visual frame the brain uses to embed a chunk in its musical context. The design accepts this tradeoff in service of the "force focus" goal (preventing drift into the next bar) and mitigates it with (a) the auto-context-strip (clef/key/time visible), (b) the caption strip (tempo/dynamic visible), and (c) the context pass on graduation to Confident (re-embed in the phrase once the bit is locked). This is a deliberate values choice, not an oversight.
 - **The "tortoise" philosophy.** Well supported by pedagogical tradition (Neuhaus, Whiteside, generations of teachers); less well supported by controlled experimental studies. The argument that errors practised at speed "ingrain" is more clinical observation than RCT. Motif builds the philosophy in as the default but allows full override (custom sessions, disabled timer, blocked practice mode).
 
 ### 13.3 What the evidence complicates or undermines
 
 - **Deliberate practice as a single explanation is overstated.** Macnamara, Hambrick & Oswald (2014, *Psychological Science*) meta-analysis found deliberate practice accounts for ~21% of variance in music performance — meaningful but not deterministic. The app's framing should not promise mastery from time-on-app alone.
-- **Self-rating accuracy is suspect.** Dunning–Kruger (1999) and Hewitt (2002) — students who struggle most are least accurate at self-assessing. The scheduler's primary input layer (the Struggling/Working/Solid/Mastered label) is noisiest precisely where it matters most. v1 mitigation: the under-invested boost and the stall detector both use *objective* signals (time, attempt count, difficulty-change history) so the scheduler is not 100% reliant on self-labels. v2 candidates: recording-based pitch/timing analysis, scheduled re-tests.
+- **Self-rating accuracy is suspect.** Dunning–Kruger (1999) and Hewitt (2002) — students who struggle most are least accurate at self-assessing. The scheduler's primary input layer (the Learning/Shaping/Confident/Performance-Ready label) is noisiest precisely where it matters most. v1 mitigation: the under-invested boost and the stall detector both use *objective* signals (time, attempt count, difficulty-change history) so the scheduler is not 100% reliant on self-labels. v2 candidates: recording-based pitch/timing analysis, scheduled re-tests.
 - **Blocked single-piece practice is worse for retention** than interleaved practice (Shea & Morgan 1979; Carter & Grahn 2016, *Frontiers in Psychology*). Addressed by the default interleaving rules in §3.
-- **Mastered ≠ done.** Driskell, Willis & Copper (1992) on overlearning and Bahrick's long-term retention work — maintenance practice is required. Addressed by the Mastered floor in the scoring function (never zero) and the long-interval re-exposure curve.
+- **Performance-Ready ≠ done.** Driskell, Willis & Copper (1992) on overlearning and Bahrick's long-term retention work — maintenance practice is required. Addressed by the Performance-Ready floor in the scoring function (never zero) and the long-interval re-exposure curve.
 - **Autonomy and intrinsic motivation matter.** Evans (2015, *Psychology of Music*); Deci, Koestner & Ryan (1999). Prescriptive scheduling and gamification can shift locus-of-causality to external and reduce long-term engagement. Mitigations: (a) overrides surfaced from day one (§3), (b) the heatmap is a progress visualisation, *not* gamification — no streaks, no badges, no loss-aversion mechanics, (c) the scaffolding-fade principle.
 
 ### 13.4 What's missing from v1 and why

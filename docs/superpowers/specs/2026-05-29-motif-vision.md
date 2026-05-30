@@ -89,7 +89,7 @@ The features that require ML or substantial new effort:
 
 Not vanity metrics. Specific behavioural signals that the product is solving the real problem:
 
-- **Practice distribution shifts.** Users spend a measurably higher proportion of time on Struggling/stale segments after a few weeks than they did at start. The avoidance problem is being broken.
+- **Practice distribution shifts.** Users spend a measurably higher proportion of time on Learning/stale segments after a few weeks than they did at start. The avoidance problem is being broken.
 - **Sessions per piece compound.** Users return to the same piece week after week and the heatmap visibly greens up — not just for the opening, but evenly across pages.
 - **Stalled segments resolve.** When the stall card surfaces and a user follows a suggestion, the segment subsequently improves. The "jumping-off point" actually jumps off.
 - **Audio history is listened to.** Users replay their own old takes — a sign the long-term progress visualisation is emotionally meaningful, not just data.
