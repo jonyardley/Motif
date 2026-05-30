@@ -137,6 +137,22 @@ impl Segment {
     pub fn total_seconds_practiced(&self) -> u64 {
         self.practice_history.iter().map(|a| a.duration_seconds as u64).sum()
     }
+
+    /// Append a practice attempt to the segment's history.
+    pub fn record_attempt(&mut self, attempt: PracticeAttempt) {
+        self.practice_history.push(attempt);
+    }
+
+    /// Set the segment's current difficulty rating and annotate the most-recent
+    /// attempt (if any) with the same rating. Calling this without any practice
+    /// history still updates the segment's `difficulty` field — useful for the
+    /// editor's "set initial difficulty" flow.
+    pub fn self_rate(&mut self, rating: Difficulty) {
+        self.difficulty = rating;
+        if let Some(last) = self.practice_history.last_mut() {
+            last.self_rating_after = Some(rating);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -310,5 +326,43 @@ mod tests {
         let end_of_second = DateTime::parse_from_rfc3339("2026-05-22T10:01:30Z").unwrap().with_timezone(&Utc);
         assert_eq!(s.last_practiced_at(), Some(end_of_second));
         assert_eq!(s.total_seconds_practiced(), 150);
+    }
+
+    #[test]
+    fn record_attempt_appends_to_history() {
+        let mut s = make_segment("s1", "p1", Difficulty::Working);
+        assert!(s.practice_history.is_empty());
+        s.record_attempt(PracticeAttempt {
+            id: AttemptId("a1".into()),
+            segment_id: SegmentId("s1".into()),
+            started_at: DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z").unwrap().with_timezone(&Utc),
+            duration_seconds: 60,
+            recording_ref: None,
+            self_rating_after: None,
+        });
+        assert_eq!(s.practice_history.len(), 1);
+    }
+
+    #[test]
+    fn self_rate_updates_difficulty_and_last_attempt() {
+        let mut s = make_segment("s1", "p1", Difficulty::Struggling);
+        s.record_attempt(PracticeAttempt {
+            id: AttemptId("a1".into()),
+            segment_id: SegmentId("s1".into()),
+            started_at: DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z").unwrap().with_timezone(&Utc),
+            duration_seconds: 60,
+            recording_ref: None,
+            self_rating_after: None,
+        });
+        s.self_rate(Difficulty::Working);
+        assert_eq!(s.difficulty, Difficulty::Working);
+        assert_eq!(s.practice_history[0].self_rating_after, Some(Difficulty::Working));
+    }
+
+    #[test]
+    fn self_rate_without_history_still_updates_difficulty() {
+        let mut s = make_segment("s1", "p1", Difficulty::Struggling);
+        s.self_rate(Difficulty::Solid);
+        assert_eq!(s.difficulty, Difficulty::Solid);
     }
 }
