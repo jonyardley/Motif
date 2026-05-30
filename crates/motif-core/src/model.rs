@@ -124,6 +124,21 @@ pub struct Segment {
     pub goal: Option<String>,
 }
 
+impl Segment {
+    /// The end-time of the most recent attempt (start + duration). `None` if no attempts.
+    pub fn last_practiced_at(&self) -> Option<DateTime<Utc>> {
+        self.practice_history
+            .iter()
+            .map(|a| a.started_at + chrono::Duration::seconds(a.duration_seconds as i64))
+            .max()
+    }
+
+    /// Total seconds practiced across all attempts.
+    pub fn total_seconds_practiced(&self) -> u64 {
+        self.practice_history.iter().map(|a| a.duration_seconds as u64).sum()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Page {
     pub id: PageId,
@@ -267,5 +282,33 @@ mod tests {
         let json = serde_json::to_string(&piece).unwrap();
         let back: Piece = serde_json::from_str(&json).unwrap();
         assert_eq!(back, piece);
+    }
+
+    #[test]
+    fn segment_helpers_summarise_practice_history() {
+        let mut s = make_segment("s1", "p1", Difficulty::Working);
+        assert_eq!(s.last_practiced_at(), None);
+        assert_eq!(s.total_seconds_practiced(), 0);
+
+        s.practice_history.push(PracticeAttempt {
+            id: AttemptId("a1".into()),
+            segment_id: SegmentId("s1".into()),
+            started_at: DateTime::parse_from_rfc3339("2026-05-20T10:00:00Z").unwrap().with_timezone(&Utc),
+            duration_seconds: 60,
+            recording_ref: None,
+            self_rating_after: None,
+        });
+        s.practice_history.push(PracticeAttempt {
+            id: AttemptId("a2".into()),
+            segment_id: SegmentId("s1".into()),
+            started_at: DateTime::parse_from_rfc3339("2026-05-22T10:00:00Z").unwrap().with_timezone(&Utc),
+            duration_seconds: 90,
+            recording_ref: None,
+            self_rating_after: None,
+        });
+
+        let end_of_second = DateTime::parse_from_rfc3339("2026-05-22T10:01:30Z").unwrap().with_timezone(&Utc);
+        assert_eq!(s.last_practiced_at(), Some(end_of_second));
+        assert_eq!(s.total_seconds_practiced(), 150);
     }
 }
