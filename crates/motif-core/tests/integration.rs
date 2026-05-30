@@ -138,3 +138,48 @@ fn piece_with_segments_roundtrips_through_json() {
     let back: Piece = serde_json::from_str(&json).unwrap();
     assert_eq!(back, piece);
 }
+
+#[test]
+fn under_invested_boost_does_not_crowd_out_stale_mastered() {
+    // Operational invariant: a Mastered segment that has been kept in long-interval
+    // rotation (60+ days since last practice, time invested) should outscore a
+    // Mastered segment that was rated Mastered just yesterday with little time
+    // invested. The under-invested boost must not let new-Mastered crowd out
+    // stale-Mastered.
+    //
+    // Note for v2: a Mastered segment with *no* practice history at all is a
+    // semantically odd state (the user marked it Mastered without ever practising)
+    // and the current scoring treats it as fully stale via the 10_000-day sentinel.
+    // That's defensible in v1 — Mastered + zero history is unlikely outside an
+    // editor "set initial difficulty" edge case — but worth revisiting if it
+    // becomes common.
+    //
+    // Numerically:
+    //   fresh Mastered (1 day ago, 5 min spent) = 1.0 × 0.2 × 1.5 = 0.3
+    //   stale Mastered (60 days ago, 35 min spent) = 1.0 × 2.0 × 1.0 = 2.0
+    // Stale wins comfortably.
+    let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+
+    let mut fresh_mastered = make_segment("fresh", "piece", Difficulty::Mastered);
+    fresh_mastered.record_attempt(PracticeAttempt {
+        id: AttemptId("a-fresh".into()),
+        segment_id: SegmentId("fresh".into()),
+        started_at: now - Duration::days(1),
+        duration_seconds: 60 * 5, // 5 minutes — under-invested boost still applies
+        recording_ref: None,
+        self_rating_after: None,
+    });
+
+    let mut stale_mastered = make_segment("stale", "piece", Difficulty::Mastered);
+    stale_mastered.record_attempt(PracticeAttempt {
+        id: AttemptId("a-stale".into()),
+        segment_id: SegmentId("stale".into()),
+        started_at: now - Duration::days(60),
+        duration_seconds: 60 * 35, // 35 minutes — above the under-invested threshold
+        recording_ref: None,
+        self_rating_after: None,
+    });
+
+    let picked = pick_session(&[fresh_mastered, stale_mastered], 1, now);
+    assert_eq!(picked, vec![SegmentId("stale".into())]);
+}
