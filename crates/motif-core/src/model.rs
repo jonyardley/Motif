@@ -69,6 +69,18 @@ impl Difficulty {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemorisationState {
+    None,
+    Learning,
+    Memorised,
+    Verified,
+}
+
+impl Default for MemorisationState {
+    fn default() -> Self { MemorisationState::None }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +123,11 @@ mod tests {
         assert_eq!(Difficulty::Solid.one_step_lower(), Difficulty::Working);
         assert_eq!(Difficulty::Working.one_step_lower(), Difficulty::Struggling);
         assert_eq!(Difficulty::Struggling.one_step_lower(), Difficulty::Struggling);
+    }
+
+    #[test]
+    fn memorisation_state_default_is_none() {
+        let m: MemorisationState = Default::default();
+        assert_eq!(m, MemorisationState::None);
     }
 }
