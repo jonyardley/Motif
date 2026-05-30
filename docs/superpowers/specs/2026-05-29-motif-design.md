@@ -285,6 +285,41 @@ All v1 automation runs on-device using Vision and classical image processing. No
 
 Everything above is a suggestion overlaid on the manual primitive. If detection fails or the user disagrees, the manual flow is unchanged. The aim is that on a clean page photo, creating a usable segment with full musical context is two-or-three taps and no typing.
 
+### 7.3 Implementation notes — v1 automation stack
+
+The "magic" in §7.2 deliberately avoids deep-learning OMR. The full OMR pipeline (oemer, Audiveris, etc.) gives us *semantic note recognition* — which v1 does not need. v1 needs *layout detection* (where are the systems, where are the bar lines) and *text recognition* (Largo, p, ff, dim., rehearsal marks). Both are achievable on-device with Apple's Vision framework plus a small classical computer-vision pass — no ML model to train, ship, or maintain.
+
+**Decision: build on Apple Vision + classical CV. Defer OMR.**
+
+#### Pipeline
+
+1. **Page rectification.** `VNDetectDocumentSegmentationRequest` (iOS 15+) on the captured photo or PDF page render. Handles phone-photo perspective for free.
+2. **Binarisation.** Adaptive threshold via Accelerate/vImage or Metal Performance Shaders to produce a clean black-on-white image for the projection passes below.
+3. **Staff/system detection.** Horizontal projection profile across the binarised image; staff lines appear as five evenly-spaced peaks. Peak-group detection finds staves; pairing into systems (two staves per piano grand staff) is geometric. Implementation lives in the Rust core via the `imageproc` crate so the same logic ships on Android later if we want.
+4. **Bar-line detection.** Within each system's bounding box, vertical projection of dark pixels. Bar lines are tall, thin, periodic peaks — filter by aspect ratio. Yields bar segmentation per system.
+5. **Text recognition.** `VNRecognizeTextRequest` restricted by region-of-interest to areas above/below staves, with a custom vocabulary hint covering Italian musical terms (Largo, Moderato, Allegro, Andante, etc.) and dynamic letters (p, mp, mf, f, ff, sf, fp, etc.). Recognised text near a segment populates the tempo / dynamic / expression caption fields.
+6. **Snap-to-bar.** When the user finishes drawing a segment rect, snap its left/right edges to the nearest detected bar lines from step 4.
+7. **Auto-context-strip.** Use the system bounding boxes from step 3 to propose a rect covering the leftmost portion of the system that contains the new segment (clef + key sig + time sig region).
+
+#### What we explicitly do not do in v1
+
+- **Semantic note recognition** (pitch, rhythm, voicing, MusicXML output). Different problem, orders of magnitude harder, not needed for the v1 feature set.
+- **Glyph classification of clef, key signature, time signature.** v1 sidesteps by showing the *image* of these glyphs in the context strip. The user reads them; the app doesn't need to parse them. v2 candidate (see §11).
+- **Server-side OMR.** Considered and rejected — kills the local-first design, adds 10–60 s per page latency, requires network for a feature users will try at the piano with bad wifi.
+- **Bundled ML models.** No model weights shipped, no model weights downloaded on first run. Everything runs through Apple's system frameworks or hand-written CV in the Rust core.
+
+#### Why this is enough
+
+The user always has the manual primitive available (§7.1). The automation is *suggestion + one-tap-confirm* over those primitives — so a 70% detection accuracy is already valuable, and 90% feels like magic. A genuine OMR pipeline would only matter if we promised semantic features (transpose, MIDI export, auto-fingering) which v1 does not.
+
+#### Effort estimate
+
+- Vision integrations (rectification, text recognition): days, mostly glue code.
+- Projection-profile staff and bar-line detection in the Rust core: 1–2 weeks of focused work to reach "good enough", measured against a small held-out set of test page photos.
+- The user-correction UI for the cases the heuristic misses is the same UI as the manual primitive — no extra work, and it doubles as training data if we ever do add ML.
+
+Total: 2–3 weeks of focused work for the v1 automation, versus 3–6 months for a deep-learning OMR port. The cost/value ratio is decisive.
+
 ## 8. Architecture (Crux split)
 
 This is the natural fit for Crux. The Rust core is pure, deterministic, and owns all reasoning about state. The Swift shell handles everything that requires platform APIs.
