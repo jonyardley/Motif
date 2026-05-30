@@ -9,7 +9,7 @@ impl Segment {
     /// Replace the segment's current scope with new rects. The previous rects
     /// become a `ScopeStage` history entry along with the difficulty rating at
     /// promotion. If `drop_difficulty` is true (the spec default), the segment's
-    /// difficulty drops one step (e.g. Solid → Working). Otherwise difficulty
+    /// difficulty drops one step (e.g. Confident → Shaping). Otherwise difficulty
     /// stays where it was, which is appropriate when the user has explicitly
     /// rated the larger scope before expanding.
     pub fn expand_scope(
@@ -52,7 +52,7 @@ mod tests {
                 w: 50.0,
                 h: 50.0,
             }],
-            difficulty: Difficulty::Solid,
+            difficulty: Difficulty::Confident,
             tags: vec![],
             notes: String::new(),
             tempo_marking: None,
@@ -86,10 +86,10 @@ mod tests {
         assert_eq!(s.scope_history[0].rects, original_rects);
         assert_eq!(
             s.scope_history[0].difficulty_at_promotion,
-            Difficulty::Solid
+            Difficulty::Confident
         );
         assert_eq!(s.scope_history[0].promoted_at, now);
-        assert_eq!(s.difficulty, Difficulty::Working);
+        assert_eq!(s.difficulty, Difficulty::Shaping);
     }
 
     #[test]
@@ -104,7 +104,7 @@ mod tests {
             h: 200.0,
         }];
         s.expand_scope(new_rects, now, false);
-        assert_eq!(s.difficulty, Difficulty::Solid);
+        assert_eq!(s.difficulty, Difficulty::Confident);
     }
 
     #[test]
@@ -137,7 +137,7 @@ mod tests {
         assert_eq!(s.scope_history.len(), 2);
         assert_eq!(s.scope_history[0].promoted_at, t1);
         assert_eq!(s.scope_history[1].promoted_at, t2);
-        // Started Solid → Working (after first expand) → Struggling (after second)
-        assert_eq!(s.difficulty, Difficulty::Struggling);
+        // Started Confident → Shaping (after first expand) → Learning (after second)
+        assert_eq!(s.difficulty, Difficulty::Learning);
     }
 }

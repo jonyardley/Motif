@@ -37,12 +37,12 @@ fn make_segment(id: &str, piece: &str, difficulty: Difficulty) -> Segment {
 }
 
 #[test]
-fn scheduler_prioritises_struggling_and_neglected_over_mastered_and_recent() {
+fn scheduler_prioritises_learning_and_neglected_over_performance_ready_and_recent() {
     let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
 
-    let mut struggling = make_segment("s-hard", "piece", Difficulty::Struggling);
+    let mut learning_segment = make_segment("s-hard", "piece", Difficulty::Learning);
     // 4 days since last practice
-    struggling.record_attempt(PracticeAttempt {
+    learning_segment.record_attempt(PracticeAttempt {
         id: AttemptId("a1".into()),
         segment_id: SegmentId("s-hard".into()),
         started_at: now - Duration::days(4),
@@ -51,24 +51,25 @@ fn scheduler_prioritises_struggling_and_neglected_over_mastered_and_recent() {
         self_rating_after: None,
     });
 
-    let mut mastered_fresh = make_segment("s-easy-fresh", "piece", Difficulty::Mastered);
-    mastered_fresh.record_attempt(PracticeAttempt {
+    let mut recent_performance_ready =
+        make_segment("s-easy-recent", "piece", Difficulty::PerformanceReady);
+    recent_performance_ready.record_attempt(PracticeAttempt {
         id: AttemptId("a2".into()),
-        segment_id: SegmentId("s-easy-fresh".into()),
+        segment_id: SegmentId("s-easy-recent".into()),
         started_at: now - Duration::hours(2),
         duration_seconds: 300,
         recording_ref: None,
         self_rating_after: None,
     });
 
-    let picked = pick_session(&[struggling, mastered_fresh], 1, now);
+    let picked = pick_session(&[learning_segment, recent_performance_ready], 1, now);
     assert_eq!(picked, vec![SegmentId("s-hard".into())]);
 }
 
 #[test]
 fn scope_expansion_preserves_practice_history_across_stages() {
     let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
-    let mut s = make_segment("s", "piece", Difficulty::Solid);
+    let mut s = make_segment("s", "piece", Difficulty::Confident);
 
     s.record_attempt(PracticeAttempt {
         id: AttemptId("a1".into()),
@@ -76,7 +77,7 @@ fn scope_expansion_preserves_practice_history_across_stages() {
         started_at: now - Duration::days(3),
         duration_seconds: 600,
         recording_ref: None,
-        self_rating_after: Some(Difficulty::Solid),
+        self_rating_after: Some(Difficulty::Confident),
     });
 
     s.expand_scope(
@@ -93,7 +94,7 @@ fn scope_expansion_preserves_practice_history_across_stages() {
 
     assert_eq!(
         s.difficulty,
-        Difficulty::Working,
+        Difficulty::Shaping,
         "default expand drops one step"
     );
     assert_eq!(s.scope_history.len(), 1);
@@ -107,9 +108,9 @@ fn scope_expansion_preserves_practice_history_across_stages() {
 #[test]
 fn stalled_segment_in_realistic_three_week_history() {
     let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
-    let mut s = make_segment("s", "piece", Difficulty::Struggling);
+    let mut s = make_segment("s", "piece", Difficulty::Learning);
 
-    // Eight attempts over 20 days, all rated Struggling.
+    // Eight attempts over 20 days, all rated Learning.
     for i in 0..8 {
         s.record_attempt(PracticeAttempt {
             id: AttemptId(format!("a{}", i)),
@@ -117,7 +118,7 @@ fn stalled_segment_in_realistic_three_week_history() {
             started_at: now - Duration::days(20 - i * 2),
             duration_seconds: 300,
             recording_ref: None,
-            self_rating_after: Some(Difficulty::Struggling),
+            self_rating_after: Some(Difficulty::Learning),
         });
     }
 
@@ -132,7 +133,7 @@ fn piece_with_pages_and_evolved_segments_roundtrips_through_json() {
     // crate boundary.
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
 
-    let mut evolved_segment = make_segment("seg-evolved", "p1", Difficulty::Solid);
+    let mut evolved_segment = make_segment("seg-evolved", "p1", Difficulty::Confident);
     // Simulate a chunk-up: kernel grew to a wider rect, with the original archived.
     evolved_segment.expand_scope(
         vec![Rect {
@@ -159,7 +160,7 @@ fn piece_with_pages_and_evolved_segments_roundtrips_through_json() {
             height: 2000,
         }],
         segments: vec![
-            make_segment("s-struggling", "p1", Difficulty::Struggling),
+            make_segment("s-learning", "p1", Difficulty::Learning),
             evolved_segment,
         ],
     };
@@ -172,37 +173,41 @@ fn piece_with_pages_and_evolved_segments_roundtrips_through_json() {
 }
 
 #[test]
-fn under_invested_boost_does_not_crowd_out_stale_mastered() {
-    // Operational invariant: a Mastered segment that has been kept in long-interval
-    // rotation should outscore a Mastered segment that was rated Mastered just
-    // yesterday with little time invested. The under-invested boost must not let
-    // new-Mastered crowd out stale-Mastered.
+fn under_invested_boost_does_not_crowd_out_stale_performance_ready() {
+    // Operational invariant: a Performance-Ready segment that has been kept in
+    // long-interval rotation should outscore a Performance-Ready segment that
+    // was rated Performance-Ready just yesterday with little time invested.
+    // The under-invested boost must not let recent Performance-Ready segments
+    // crowd out stale Performance-Ready ones.
     //
-    // Asserts the *ratio* (stale dominates by at least 4x) rather than the exact
-    // numbers, so the invariant survives plausible future scoring refinements
-    // (e.g. tweaking the under-invested curve or extending the Mastered staleness
-    // cap) as long as the qualitative property still holds.
+    // Asserts the *ratio* (stale dominates by at least 4x) rather than the
+    // exact numbers, so the invariant survives plausible future scoring
+    // refinements (e.g. tweaking the under-invested curve or extending the
+    // Performance-Ready staleness cap) as long as the qualitative property
+    // still holds.
     //
-    // Note for v2: a Mastered segment with no practice history at all is a
-    // semantically odd state (the user marked it Mastered without ever practising)
-    // and the current scoring treats it as fully stale via the 10_000-day sentinel.
-    // That's defensible in v1 — Mastered + zero history is unlikely outside an
-    // editor "set initial difficulty" edge case — but worth revisiting if it
-    // becomes common.
+    // Note for v2: a Performance-Ready segment with no practice history at
+    // all is a semantically odd state (the user marked it Performance-Ready
+    // without ever practising) and the current scoring treats it as fully
+    // stale via the 10_000-day sentinel. That's defensible in v1 —
+    // Performance-Ready + zero history is unlikely outside an editor "set
+    // initial difficulty" edge case — but worth revisiting if it becomes
+    // common.
     let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
 
-    let mut fresh_mastered = make_segment("fresh", "piece", Difficulty::Mastered);
-    fresh_mastered.record_attempt(PracticeAttempt {
-        id: AttemptId("a-fresh".into()),
-        segment_id: SegmentId("fresh".into()),
+    let mut recent_performance_ready =
+        make_segment("recent", "piece", Difficulty::PerformanceReady);
+    recent_performance_ready.record_attempt(PracticeAttempt {
+        id: AttemptId("a-recent".into()),
+        segment_id: SegmentId("recent".into()),
         started_at: now - Duration::days(1),
         duration_seconds: 60 * 5, // 5 minutes — lands in the 1.2x under-invested bucket
         recording_ref: None,
         self_rating_after: None,
     });
 
-    let mut stale_mastered = make_segment("stale", "piece", Difficulty::Mastered);
-    stale_mastered.record_attempt(PracticeAttempt {
+    let mut stale_performance_ready = make_segment("stale", "piece", Difficulty::PerformanceReady);
+    stale_performance_ready.record_attempt(PracticeAttempt {
         id: AttemptId("a-stale".into()),
         segment_id: SegmentId("stale".into()),
         started_at: now - Duration::days(90), // deep in the long-rotation regime
@@ -211,15 +216,15 @@ fn under_invested_boost_does_not_crowd_out_stale_mastered() {
         self_rating_after: None,
     });
 
-    let fresh_score = score(&fresh_mastered, now);
-    let stale_score = score(&stale_mastered, now);
+    let recent_score = score(&recent_performance_ready, now);
+    let stale_score = score(&stale_performance_ready, now);
 
     assert!(
-        stale_score >= fresh_score * 4.0,
-        "stale Mastered should dominate fresh Mastered by at least 4x; got stale={stale_score}, fresh={fresh_score}",
+        stale_score >= recent_score * 4.0,
+        "stale Performance-Ready should dominate recent Performance-Ready by at least 4x; got stale={stale_score}, recent={recent_score}",
     );
 
     // Also assert the operational consequence: the picker picks the stale one.
-    let picked = pick_session(&[fresh_mastered, stale_mastered], 1, now);
+    let picked = pick_session(&[recent_performance_ready, stale_performance_ready], 1, now);
     assert_eq!(picked, vec![SegmentId("stale".into())]);
 }

@@ -17,12 +17,13 @@ pub fn staleness_factor(days_since: f64) -> f64 {
     (1.0 + days_since.max(0.0).sqrt()).min(10.0)
 }
 
-/// Mastered staleness curve: targets long-interval re-exposure at ~14 / 30 / 60 days,
-/// per the overlearning literature. Below 14 days the score is intentionally low so
-/// mastered segments don't crowd out struggling ones; from 14 days onward the score
-/// ramps up so a mastered segment that hasn't been touched for two months is
-/// genuinely competitive in the queue.
-pub fn staleness_factor_mastered(days_since: f64) -> f64 {
+/// Performance-Ready staleness curve: targets long-interval re-exposure at
+/// ~14 / 30 / 60 days, per the overlearning literature. Below 14 days the
+/// score is intentionally low so performance-ready segments don't crowd out
+/// Learning ones; from 14 days onward the score ramps up so a performance-ready
+/// segment that hasn't been touched for two months is genuinely competitive
+/// in the queue.
+pub fn staleness_factor_performance_ready(days_since: f64) -> f64 {
     let d = days_since.max(0.0);
     if d < 14.0 {
         0.2
@@ -58,13 +59,14 @@ pub fn under_invested_factor(total_seconds_practiced: u64) -> f64 {
 ///
 /// `score = difficulty_weight × staleness_factor × under_invested_factor`
 ///
-/// For Mastered segments, the Mastered staleness curve is used so that they
-/// stay in long-interval rotation rather than dominating or being dropped.
+/// For Performance-Ready segments, the Performance-Ready staleness curve is used
+/// so that they stay in long-interval rotation rather than dominating or being
+/// dropped.
 pub fn score(segment: &Segment, now: DateTime<Utc>) -> f64 {
     let dw = difficulty_weight(segment.difficulty);
     let days = days_since_last_practice(segment, now);
     let sf = match segment.difficulty {
-        crate::model::Difficulty::Mastered => staleness_factor_mastered(days),
+        Difficulty::PerformanceReady => staleness_factor_performance_ready(days),
         _ => staleness_factor(days),
     };
     let uif = under_invested_factor(segment.total_seconds_practiced());
@@ -130,8 +132,11 @@ mod tests {
 
     #[test]
     fn difficulty_weight_matches_spec() {
-        assert_eq!(difficulty_weight(Difficulty::Struggling), 4.0);
-        assert_eq!(difficulty_weight(Difficulty::Mastered), 1.0);
+        assert_eq!(difficulty_weight(Difficulty::Fresh), 4.0);
+        assert_eq!(difficulty_weight(Difficulty::Learning), 4.0);
+        assert_eq!(difficulty_weight(Difficulty::Shaping), 3.0);
+        assert_eq!(difficulty_weight(Difficulty::Confident), 2.0);
+        assert_eq!(difficulty_weight(Difficulty::PerformanceReady), 1.0);
     }
 
     #[test]
@@ -157,17 +162,17 @@ mod tests {
     }
 
     #[test]
-    fn mastered_staleness_is_quiet_in_first_two_weeks() {
-        assert_eq!(staleness_factor_mastered(0.0), 0.2);
-        assert_eq!(staleness_factor_mastered(13.9), 0.2);
+    fn performance_ready_staleness_is_quiet_in_first_two_weeks() {
+        assert_eq!(staleness_factor_performance_ready(0.0), 0.2);
+        assert_eq!(staleness_factor_performance_ready(13.9), 0.2);
     }
 
     #[test]
-    fn mastered_staleness_ramps_at_target_intervals() {
-        assert_eq!(staleness_factor_mastered(14.0), 0.6);
-        assert_eq!(staleness_factor_mastered(30.0), 1.2);
-        assert_eq!(staleness_factor_mastered(60.0), 2.0);
-        assert_eq!(staleness_factor_mastered(365.0), 2.0); // capped at 2.0
+    fn performance_ready_staleness_ramps_at_target_intervals() {
+        assert_eq!(staleness_factor_performance_ready(14.0), 0.6);
+        assert_eq!(staleness_factor_performance_ready(30.0), 1.2);
+        assert_eq!(staleness_factor_performance_ready(60.0), 2.0);
+        assert_eq!(staleness_factor_performance_ready(365.0), 2.0); // capped at 2.0
     }
 
     #[test]
@@ -218,20 +223,21 @@ mod tests {
     }
 
     #[test]
-    fn struggling_unpractised_outscores_mastered_unpractised() {
+    fn learning_unpractised_outscores_performance_ready_unpractised() {
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
-        let struggling = seg_with_history(Difficulty::Struggling, vec![]);
-        let mastered = seg_with_history(Difficulty::Mastered, vec![]);
-        // Both unpractised → both very stale, but struggling weight × regular curve
-        // should beat mastered weight × mastered curve (which caps at 2.0).
-        assert!(score(&struggling, now) > score(&mastered, now));
+        let learning = seg_with_history(Difficulty::Learning, vec![]);
+        let performance_ready = seg_with_history(Difficulty::PerformanceReady, vec![]);
+        // Both unpractised → both very stale, but Learning weight × regular curve
+        // should beat PerformanceReady weight × Performance-Ready curve
+        // (which caps at 2.0).
+        assert!(score(&learning, now) > score(&performance_ready, now));
     }
 
     #[test]
-    fn just_practiced_struggling_still_has_meaningful_score() {
+    fn just_practiced_learning_still_has_meaningful_score() {
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
         // Practised an hour ago for 10 minutes.
-        let s = seg_with_history(Difficulty::Struggling, vec![("2026-06-01T11:00:00Z", 600)]);
+        let s = seg_with_history(Difficulty::Learning, vec![("2026-06-01T11:00:00Z", 600)]);
         // weight 4 × staleness ~1.0 × under_invested 1.2 = ~4.8
         let value = score(&s, now);
         assert!(value > 4.0, "expected > 4.0, got {value}");
@@ -240,7 +246,7 @@ mod tests {
 
     #[test]
     fn never_practised_has_high_staleness() {
-        let s = seg_with_history(Difficulty::Working, vec![]);
+        let s = seg_with_history(Difficulty::Shaping, vec![]);
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
         assert_eq!(days_since_last_practice(&s, now), 10_000.0);
     }
@@ -256,9 +262,9 @@ mod tests {
     fn pick_session_returns_top_n_when_only_one_piece() {
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
         let segs = vec![
-            seg_in_piece("s1", "p", Difficulty::Struggling),
-            seg_in_piece("s2", "p", Difficulty::Working),
-            seg_in_piece("s3", "p", Difficulty::Solid),
+            seg_in_piece("s1", "p", Difficulty::Learning),
+            seg_in_piece("s2", "p", Difficulty::Shaping),
+            seg_in_piece("s3", "p", Difficulty::Confident),
         ];
         let picked = pick_session(&segs, 2, now);
         assert_eq!(picked, vec![SegmentId("s1".into()), SegmentId("s2".into())]);
@@ -267,12 +273,12 @@ mod tests {
     #[test]
     fn pick_session_interleaves_across_pieces() {
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
-        // Two struggling segments in piece A, one struggling in piece B.
+        // Two Learning segments in piece A, one Learning segment in piece B.
         // Raw score order would put both A's first; interleaving should put B in between.
         let segs = vec![
-            seg_in_piece("a1", "A", Difficulty::Struggling),
-            seg_in_piece("a2", "A", Difficulty::Struggling),
-            seg_in_piece("b1", "B", Difficulty::Struggling),
+            seg_in_piece("a1", "A", Difficulty::Learning),
+            seg_in_piece("a2", "A", Difficulty::Learning),
+            seg_in_piece("b1", "B", Difficulty::Learning),
         ];
         let picked = pick_session(&segs, 3, now);
         assert_eq!(picked[0], SegmentId("a1".into()));
@@ -285,8 +291,8 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
         // Only one piece — interleaving has nothing to do, returns top-N as-is.
         let segs = vec![
-            seg_in_piece("s1", "p", Difficulty::Struggling),
-            seg_in_piece("s2", "p", Difficulty::Working),
+            seg_in_piece("s1", "p", Difficulty::Learning),
+            seg_in_piece("s2", "p", Difficulty::Shaping),
         ];
         let picked = pick_session(&segs, 2, now);
         assert_eq!(picked, vec![SegmentId("s1".into()), SegmentId("s2".into())]);
@@ -301,7 +307,7 @@ mod tests {
     #[test]
     fn pick_session_returns_fewer_than_n_when_not_enough_segments() {
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
-        let segs = vec![seg_in_piece("s1", "p", Difficulty::Struggling)];
+        let segs = vec![seg_in_piece("s1", "p", Difficulty::Learning)];
         let picked = pick_session(&segs, 5, now);
         assert_eq!(picked.len(), 1);
     }

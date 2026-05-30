@@ -27,45 +27,67 @@ pub struct Rect {
     pub h: f32,
 }
 
+/// A segment's current state on the practice journey from "just added" to
+/// "concert-ready". See the design spec §2.2 for the rationale behind the
+/// labels (positive framing, no "Struggling"; honest framing, no "Mastered").
+///
+/// `Fresh` is auto-assigned at construction and auto-transitions to `Learning`
+/// when the first practice attempt is recorded (see [`Segment::record_attempt`]).
+/// The user never picks `Fresh` from the UI — it's only ever an initial-state
+/// marker. All other states are valid user-rated values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Difficulty {
-    Struggling,
-    Working,
-    Solid,
-    Mastered,
+    Fresh,
+    Learning,
+    Shaping,
+    Confident,
+    PerformanceReady,
 }
 
 impl Difficulty {
-    /// 0..=3 ranking, higher = closer to mastered. Used to decide whether
-    /// a difficulty change was "upward" (improvement) or not.
+    /// 0..=4 ranking from "earliest in the journey" to "concert-ready". Used
+    /// by stall detection to decide whether a self-rating change in a window
+    /// represents upward movement.
     pub fn rank(self) -> u8 {
         match self {
-            Difficulty::Struggling => 0,
-            Difficulty::Working => 1,
-            Difficulty::Solid => 2,
-            Difficulty::Mastered => 3,
+            Difficulty::Fresh => 0,
+            Difficulty::Learning => 1,
+            Difficulty::Shaping => 2,
+            Difficulty::Confident => 3,
+            Difficulty::PerformanceReady => 4,
         }
     }
 
-    /// Scheduler weight. Mastered is 1.0 (floor — never zero), Struggling 4.0.
+    /// Scheduler weight. `Fresh` and `Learning` share the highest weight (4.0)
+    /// — both deserve attention; the difference between them is whether the
+    /// segment has been worked yet, which the `under_invested_factor` surfaces
+    /// separately. `PerformanceReady` is 1.0 (floor — never zero), so a
+    /// concert-ready piece stays in long-interval rotation rather than being
+    /// dropped from consideration.
     pub fn weight(self) -> f64 {
         match self {
-            Difficulty::Struggling => 4.0,
-            Difficulty::Working => 3.0,
-            Difficulty::Solid => 2.0,
-            Difficulty::Mastered => 1.0,
+            Difficulty::Fresh | Difficulty::Learning => 4.0,
+            Difficulty::Shaping => 3.0,
+            Difficulty::Confident => 2.0,
+            Difficulty::PerformanceReady => 1.0,
         }
     }
 
-    /// Step one level down (toward Struggling). Saturates at Struggling.
-    /// Used when a segment's scope is expanded — default behaviour is to
-    /// re-rate the larger scope one step easier than the kernel.
+    /// Step one level back toward the start of the journey. Used when a
+    /// segment's scope is expanded — default behaviour is to re-rate the
+    /// larger scope one step easier than the kernel.
+    ///
+    /// Saturates at `Learning` for any non-`Fresh` value (you don't go
+    /// backwards into `Fresh`, which represents "never practised"). `Fresh`
+    /// itself saturates at `Fresh` — expanding the scope of a never-practised
+    /// segment leaves it never-practised on the bigger envelope.
     pub fn one_step_lower(self) -> Difficulty {
         match self {
-            Difficulty::Struggling => Difficulty::Struggling,
-            Difficulty::Working => Difficulty::Struggling,
-            Difficulty::Solid => Difficulty::Working,
-            Difficulty::Mastered => Difficulty::Solid,
+            Difficulty::Fresh => Difficulty::Fresh,
+            Difficulty::Learning => Difficulty::Learning,
+            Difficulty::Shaping => Difficulty::Learning,
+            Difficulty::Confident => Difficulty::Shaping,
+            Difficulty::PerformanceReady => Difficulty::Confident,
         }
     }
 }
@@ -74,7 +96,10 @@ impl Difficulty {
 pub enum MemorisationState {
     #[default]
     None,
-    Learning,
+    /// Actively committing the segment to memory. (Renamed from `Learning`
+    /// to avoid collision with `Difficulty::Learning`, which describes a
+    /// different concept on a different axis.)
+    Practising,
     Memorised,
     Verified,
 }
@@ -142,7 +167,15 @@ impl Segment {
     }
 
     /// Append a practice attempt to the segment's history.
+    ///
+    /// If the segment is currently `Fresh` (never practised), this also
+    /// auto-transitions it to `Learning`. After this point the user can
+    /// rate it explicitly via `self_rate`. `Fresh` is only ever an
+    /// initial-state marker and never reachable as a user-picked rating.
     pub fn record_attempt(&mut self, attempt: PracticeAttempt) {
+        if self.difficulty == Difficulty::Fresh {
+            self.difficulty = Difficulty::Learning;
+        }
         self.practice_history.push(attempt);
     }
 
@@ -157,10 +190,12 @@ impl Segment {
         }
     }
 
-    /// Construct a new Segment with sensible defaults: difficulty `Working`,
-    /// empty tags / notes / scope_history / practice_history, no caption metadata,
-    /// `MemorisationState::None`, no goal. Caller supplies the identity, the
-    /// piece it belongs to, its rect mask, and the creation timestamp.
+    /// Construct a new Segment with sensible defaults: difficulty `Fresh`
+    /// (auto-transitions to `Learning` on the first recorded attempt),
+    /// empty tags / notes / scope_history / practice_history, no caption
+    /// metadata, `MemorisationState::None`, no goal. Caller supplies the
+    /// identity, the piece it belongs to, its rect mask, and the creation
+    /// timestamp.
     pub fn new(
         id: SegmentId,
         piece_id: PieceId,
@@ -172,7 +207,7 @@ impl Segment {
             piece_id,
             label: None,
             rects,
-            difficulty: Difficulty::Working,
+            difficulty: Difficulty::Fresh,
             tags: Vec::new(),
             notes: String::new(),
             tempo_marking: None,
@@ -269,28 +304,41 @@ mod tests {
 
     #[test]
     fn difficulty_weights_match_spec() {
-        assert_eq!(Difficulty::Struggling.weight(), 4.0);
-        assert_eq!(Difficulty::Working.weight(), 3.0);
-        assert_eq!(Difficulty::Solid.weight(), 2.0);
-        assert_eq!(Difficulty::Mastered.weight(), 1.0);
+        // Fresh and Learning share top weight — both need attention; the
+        // under_invested_factor surfaces Fresh further via the no-time boost.
+        assert_eq!(Difficulty::Fresh.weight(), 4.0);
+        assert_eq!(Difficulty::Learning.weight(), 4.0);
+        assert_eq!(Difficulty::Shaping.weight(), 3.0);
+        assert_eq!(Difficulty::Confident.weight(), 2.0);
+        assert_eq!(Difficulty::PerformanceReady.weight(), 1.0);
     }
 
     #[test]
     fn difficulty_rank_is_ordered() {
-        assert!(Difficulty::Struggling.rank() < Difficulty::Working.rank());
-        assert!(Difficulty::Working.rank() < Difficulty::Solid.rank());
-        assert!(Difficulty::Solid.rank() < Difficulty::Mastered.rank());
+        assert!(Difficulty::Fresh.rank() < Difficulty::Learning.rank());
+        assert!(Difficulty::Learning.rank() < Difficulty::Shaping.rank());
+        assert!(Difficulty::Shaping.rank() < Difficulty::Confident.rank());
+        assert!(Difficulty::Confident.rank() < Difficulty::PerformanceReady.rank());
     }
 
     #[test]
-    fn difficulty_one_step_lower_saturates_at_struggling() {
-        assert_eq!(Difficulty::Mastered.one_step_lower(), Difficulty::Solid);
-        assert_eq!(Difficulty::Solid.one_step_lower(), Difficulty::Working);
-        assert_eq!(Difficulty::Working.one_step_lower(), Difficulty::Struggling);
+    fn difficulty_one_step_lower_saturates_at_learning_and_at_fresh() {
+        // Normal walk down the chain.
         assert_eq!(
-            Difficulty::Struggling.one_step_lower(),
-            Difficulty::Struggling
+            Difficulty::PerformanceReady.one_step_lower(),
+            Difficulty::Confident
         );
+        assert_eq!(Difficulty::Confident.one_step_lower(), Difficulty::Shaping);
+        assert_eq!(Difficulty::Shaping.one_step_lower(), Difficulty::Learning);
+
+        // Saturation at Learning — you don't walk backwards into Fresh,
+        // which represents "never practised". A Learning segment whose
+        // scope is expanded stays Learning on the bigger envelope.
+        assert_eq!(Difficulty::Learning.one_step_lower(), Difficulty::Learning);
+
+        // Fresh itself saturates: expanding a never-practised segment
+        // leaves it never-practised on the bigger envelope.
+        assert_eq!(Difficulty::Fresh.one_step_lower(), Difficulty::Fresh);
     }
 
     #[test]
@@ -309,7 +357,7 @@ mod tests {
                 .with_timezone(&Utc),
             duration_seconds: 120,
             recording_ref: Some("rec://abc".into()),
-            self_rating_after: Some(Difficulty::Working),
+            self_rating_after: Some(Difficulty::Shaping),
         };
         let json = serde_json::to_string(&a).unwrap();
         let back: PracticeAttempt = serde_json::from_str(&json).unwrap();
@@ -326,7 +374,7 @@ mod tests {
                 w: 10.0,
                 h: 10.0,
             }],
-            difficulty_at_promotion: Difficulty::Solid,
+            difficulty_at_promotion: Difficulty::Confident,
             promoted_at: DateTime::parse_from_rfc3339("2026-05-29T10:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
@@ -360,7 +408,7 @@ mod tests {
 
     #[test]
     fn segment_roundtrips() {
-        let s = make_segment("s1", "p1", Difficulty::Working);
+        let s = make_segment("s1", "p1", Difficulty::Shaping);
         let json = serde_json::to_string(&s).unwrap();
         let back: Segment = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
@@ -382,7 +430,7 @@ mod tests {
                 width: 1500,
                 height: 2000,
             }],
-            segments: vec![make_segment("seg-1", "piece-1", Difficulty::Struggling)],
+            segments: vec![make_segment("seg-1", "piece-1", Difficulty::Learning)],
         };
         let json = serde_json::to_string(&piece).unwrap();
         let back: Piece = serde_json::from_str(&json).unwrap();
@@ -391,7 +439,7 @@ mod tests {
 
     #[test]
     fn segment_helpers_summarise_practice_history() {
-        let mut s = make_segment("s1", "p1", Difficulty::Working);
+        let mut s = make_segment("s1", "p1", Difficulty::Shaping);
         assert_eq!(s.last_practiced_at(), None);
         assert_eq!(s.total_seconds_practiced(), 0);
 
@@ -425,7 +473,7 @@ mod tests {
 
     #[test]
     fn record_attempt_appends_to_history() {
-        let mut s = make_segment("s1", "p1", Difficulty::Working);
+        let mut s = make_segment("s1", "p1", Difficulty::Shaping);
         assert!(s.practice_history.is_empty());
         s.record_attempt(PracticeAttempt {
             id: AttemptId("a1".into()),
@@ -442,7 +490,7 @@ mod tests {
 
     #[test]
     fn self_rate_updates_difficulty_and_last_attempt() {
-        let mut s = make_segment("s1", "p1", Difficulty::Struggling);
+        let mut s = make_segment("s1", "p1", Difficulty::Learning);
         s.record_attempt(PracticeAttempt {
             id: AttemptId("a1".into()),
             segment_id: SegmentId("s1".into()),
@@ -453,23 +501,23 @@ mod tests {
             recording_ref: None,
             self_rating_after: None,
         });
-        s.self_rate(Difficulty::Working);
-        assert_eq!(s.difficulty, Difficulty::Working);
+        s.self_rate(Difficulty::Shaping);
+        assert_eq!(s.difficulty, Difficulty::Shaping);
         assert_eq!(
             s.practice_history[0].self_rating_after,
-            Some(Difficulty::Working)
+            Some(Difficulty::Shaping)
         );
     }
 
     #[test]
     fn self_rate_without_history_still_updates_difficulty() {
-        let mut s = make_segment("s1", "p1", Difficulty::Struggling);
-        s.self_rate(Difficulty::Solid);
-        assert_eq!(s.difficulty, Difficulty::Solid);
+        let mut s = make_segment("s1", "p1", Difficulty::Learning);
+        s.self_rate(Difficulty::Confident);
+        assert_eq!(s.difficulty, Difficulty::Confident);
     }
 
     #[test]
-    fn segment_new_uses_working_difficulty_and_empty_collections() {
+    fn segment_new_uses_fresh_difficulty_and_empty_collections() {
         let now = DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
@@ -485,7 +533,7 @@ mod tests {
             }],
             now,
         );
-        assert_eq!(s.difficulty, Difficulty::Working);
+        assert_eq!(s.difficulty, Difficulty::Fresh);
         assert!(s.tags.is_empty());
         assert!(s.notes.is_empty());
         assert!(s.scope_history.is_empty());
@@ -494,6 +542,55 @@ mod tests {
         assert_eq!(s.goal, None);
         assert_eq!(s.rects.len(), 1);
         assert_eq!(s.created_at, now);
+    }
+
+    #[test]
+    fn record_attempt_auto_transitions_fresh_to_learning() {
+        let now = DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut s = Segment::new(
+            SegmentId("s1".into()),
+            PieceId("p1".into()),
+            vec![Rect {
+                page_id: PageId("page-1".into()),
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            }],
+            now,
+        );
+        assert_eq!(s.difficulty, Difficulty::Fresh);
+
+        s.record_attempt(PracticeAttempt {
+            id: AttemptId("a1".into()),
+            segment_id: SegmentId("s1".into()),
+            started_at: now,
+            duration_seconds: 60,
+            recording_ref: None,
+            self_rating_after: None,
+        });
+
+        assert_eq!(s.difficulty, Difficulty::Learning);
+        assert_eq!(s.practice_history.len(), 1);
+    }
+
+    #[test]
+    fn record_attempt_does_not_overwrite_non_fresh_difficulty() {
+        let mut s = make_segment("s1", "p1", Difficulty::Confident);
+        s.record_attempt(PracticeAttempt {
+            id: AttemptId("a1".into()),
+            segment_id: SegmentId("s1".into()),
+            started_at: DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            duration_seconds: 60,
+            recording_ref: None,
+            self_rating_after: None,
+        });
+        // Should still be Confident, not silently re-classified.
+        assert_eq!(s.difficulty, Difficulty::Confident);
     }
 
     #[test]

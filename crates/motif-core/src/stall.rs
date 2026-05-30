@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 /// True iff the segment has at least `attempt_threshold` practice attempts within
 /// the last `week_threshold` weeks AND the highest self-rating recorded in that
 /// window is no better than the earliest self-rating recorded in that window
-/// (i.e. no upward movement toward Mastered).
+/// (i.e. no upward movement toward Performance-Ready).
 ///
 /// Attempts with no self-rating are ignored for the rating-comparison check
 /// but still count toward the attempt threshold.
@@ -18,8 +18,8 @@ use chrono::{DateTime, Duration, Utc};
 /// exercise" nudge is most useful.
 ///
 /// The window comparison uses *max* (not *latest*) rating intentionally — if the
-/// user reached Solid at any point in the window, a temporary regression to
-/// Struggling should not be treated as a stall (the right intervention is rest
+/// user reached Confident at any point in the window, a temporary regression to
+/// Learning should not be treated as a stall (the right intervention is rest
 /// or consolidation, not a different exercise).
 pub fn is_stalled(
     segment: &Segment,
@@ -66,7 +66,7 @@ mod tests {
             piece_id: PieceId("p".into()),
             label: None,
             rects: vec![],
-            difficulty: Difficulty::Working,
+            difficulty: Difficulty::Shaping,
             tags: vec![],
             notes: String::new(),
             tempo_marking: None,
@@ -97,7 +97,7 @@ mod tests {
     fn not_stalled_when_too_few_attempts() {
         let mut s = seg();
         s.practice_history
-            .push(att("2026-05-30T10:00:00Z", Some(Difficulty::Struggling)));
+            .push(att("2026-05-30T10:00:00Z", Some(Difficulty::Learning)));
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
         assert!(!is_stalled(&s, now, 6, 2));
     }
@@ -114,7 +114,7 @@ mod tests {
             "2026-05-28T10:00:00Z",
         ] {
             s.practice_history
-                .push(att(date, Some(Difficulty::Struggling)));
+                .push(att(date, Some(Difficulty::Learning)));
         }
         let now = Utc.with_ymd_and_hms(2026, 5, 30, 12, 0, 0).unwrap();
         assert!(is_stalled(&s, now, 6, 2));
@@ -124,17 +124,17 @@ mod tests {
     fn not_stalled_when_upward_rating_change_present() {
         let mut s = seg();
         s.practice_history
-            .push(att("2026-05-18T10:00:00Z", Some(Difficulty::Struggling)));
+            .push(att("2026-05-18T10:00:00Z", Some(Difficulty::Learning)));
         s.practice_history
-            .push(att("2026-05-20T10:00:00Z", Some(Difficulty::Struggling)));
+            .push(att("2026-05-20T10:00:00Z", Some(Difficulty::Learning)));
         s.practice_history
-            .push(att("2026-05-22T10:00:00Z", Some(Difficulty::Struggling)));
+            .push(att("2026-05-22T10:00:00Z", Some(Difficulty::Learning)));
         s.practice_history
-            .push(att("2026-05-24T10:00:00Z", Some(Difficulty::Struggling)));
+            .push(att("2026-05-24T10:00:00Z", Some(Difficulty::Learning)));
         s.practice_history
-            .push(att("2026-05-26T10:00:00Z", Some(Difficulty::Working)));
+            .push(att("2026-05-26T10:00:00Z", Some(Difficulty::Shaping)));
         s.practice_history
-            .push(att("2026-05-28T10:00:00Z", Some(Difficulty::Working)));
+            .push(att("2026-05-28T10:00:00Z", Some(Difficulty::Shaping)));
         let now = Utc.with_ymd_and_hms(2026, 5, 30, 12, 0, 0).unwrap();
         assert!(!is_stalled(&s, now, 6, 2));
     }
@@ -169,7 +169,7 @@ mod tests {
             "2026-05-15T10:00:00Z",
         ] {
             s.practice_history
-                .push(att(date, Some(Difficulty::Struggling)));
+                .push(att(date, Some(Difficulty::Learning)));
         }
         let now = Utc.with_ymd_and_hms(2026, 5, 30, 12, 0, 0).unwrap();
         // Only one attempt within the last 2 weeks → below threshold of 6.
