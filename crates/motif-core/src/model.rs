@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -81,6 +82,16 @@ impl Default for MemorisationState {
     fn default() -> Self { MemorisationState::None }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PracticeAttempt {
+    pub id: AttemptId,
+    pub segment_id: SegmentId,
+    pub started_at: DateTime<Utc>,
+    pub duration_seconds: u32,
+    pub recording_ref: Option<String>,
+    pub self_rating_after: Option<Difficulty>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +140,20 @@ mod tests {
     fn memorisation_state_default_is_none() {
         let m: MemorisationState = Default::default();
         assert_eq!(m, MemorisationState::None);
+    }
+
+    #[test]
+    fn practice_attempt_roundtrips() {
+        let a = PracticeAttempt {
+            id: AttemptId("a1".into()),
+            segment_id: SegmentId("s1".into()),
+            started_at: DateTime::parse_from_rfc3339("2026-05-29T10:00:00Z").unwrap().with_timezone(&Utc),
+            duration_seconds: 120,
+            recording_ref: Some("rec://abc".into()),
+            self_rating_after: Some(Difficulty::Working),
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        let back: PracticeAttempt = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, a);
     }
 }
