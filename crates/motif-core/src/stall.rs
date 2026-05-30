@@ -12,6 +12,15 @@ use chrono::{DateTime, Duration, Utc};
 ///
 /// Attempts with no self-rating are ignored for the rating-comparison check
 /// but still count toward the attempt threshold.
+///
+/// When *every* attempt in the window is unrated, returns `true`: the user keeps
+/// practising without judging progress, which is exactly when the "try a different
+/// exercise" nudge is most useful.
+///
+/// The window comparison uses *max* (not *latest*) rating intentionally — if the
+/// user reached Solid at any point in the window, a temporary regression to
+/// Struggling should not be treated as a stall (the right intervention is rest
+/// or consolidation, not a different exercise).
 pub fn is_stalled(
     segment: &Segment,
     now: DateTime<Utc>,

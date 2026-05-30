@@ -18,6 +18,10 @@ impl Segment {
         now: DateTime<Utc>,
         drop_difficulty: bool,
     ) {
+        debug_assert!(
+            !new_rects.is_empty(),
+            "expand_scope requires at least one rect; a segment with no rects is unrenderable",
+        );
         let previous_rects = std::mem::replace(&mut self.rects, new_rects);
         self.scope_history.push(ScopeStage {
             rects: previous_rects,
