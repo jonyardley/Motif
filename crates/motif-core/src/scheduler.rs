@@ -32,6 +32,23 @@ pub fn staleness_factor_mastered(days_since: f64) -> f64 {
     }
 }
 
+/// Boosts segments with little total practice time so the scheduler doesn't keep
+/// cycling the same five segments. Decays to 1.0 (no boost) once meaningful time
+/// has been spent. Time bands chosen so a brand-new segment with zero history
+/// gets a 1.5x boost; after ~30 cumulative minutes the boost has fully decayed.
+pub fn under_invested_factor(total_seconds_practiced: u64) -> f64 {
+    let minutes = total_seconds_practiced as f64 / 60.0;
+    if minutes < 5.0 {
+        1.5
+    } else if minutes < 15.0 {
+        1.2
+    } else if minutes < 30.0 {
+        1.1
+    } else {
+        1.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +93,14 @@ mod tests {
         assert_eq!(staleness_factor_mastered(30.0), 1.2);
         assert_eq!(staleness_factor_mastered(60.0), 2.0);
         assert_eq!(staleness_factor_mastered(365.0), 2.0); // capped at 2.0
+    }
+
+    #[test]
+    fn under_invested_boost_decays_with_time() {
+        assert_eq!(under_invested_factor(0), 1.5);
+        assert_eq!(under_invested_factor(60 * 4), 1.5);
+        assert_eq!(under_invested_factor(60 * 10), 1.2);
+        assert_eq!(under_invested_factor(60 * 20), 1.1);
+        assert_eq!(under_invested_factor(60 * 60), 1.0);
     }
 }
