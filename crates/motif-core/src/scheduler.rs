@@ -1,6 +1,8 @@
 //! Scheduler scoring function and session-picking logic.
 
 use crate::model::Difficulty;
+use crate::model::Segment;
+use chrono::{DateTime, Utc};
 
 /// Wraps `Difficulty::weight` for symmetry with the other curve functions in this module.
 pub fn difficulty_weight(d: Difficulty) -> f64 {
@@ -46,6 +48,38 @@ pub fn under_invested_factor(total_seconds_practiced: u64) -> f64 {
         1.1
     } else {
         1.0
+    }
+}
+
+/// The single scoring function shared by the heatmap visualisation and the
+/// guided-session picker. By construction what the user *sees* matches what
+/// the app *picks*.
+///
+/// `score = difficulty_weight × staleness_factor × under_invested_factor`
+///
+/// For Mastered segments, the Mastered staleness curve is used so that they
+/// stay in long-interval rotation rather than dominating or being dropped.
+pub fn score(segment: &Segment, now: DateTime<Utc>) -> f64 {
+    let dw = difficulty_weight(segment.difficulty);
+    let days = days_since_last_practice(segment, now);
+    let sf = match segment.difficulty {
+        crate::model::Difficulty::Mastered => staleness_factor_mastered(days),
+        _ => staleness_factor(days),
+    };
+    let uif = under_invested_factor(segment.total_seconds_practiced());
+    dw * sf * uif
+}
+
+/// Days since the most recent practice attempt, or a large sentinel (10_000) if
+/// the segment has never been practised — which guarantees a brand-new segment
+/// has a high staleness factor and surfaces in the queue.
+pub fn days_since_last_practice(segment: &Segment, now: DateTime<Utc>) -> f64 {
+    match segment.last_practiced_at() {
+        None => 10_000.0,
+        Some(last) => {
+            let secs = (now - last).num_seconds().max(0) as f64;
+            secs / 86_400.0
+        }
     }
 }
 
@@ -102,5 +136,74 @@ mod tests {
         assert_eq!(under_invested_factor(60 * 10), 1.2);
         assert_eq!(under_invested_factor(60 * 20), 1.1);
         assert_eq!(under_invested_factor(60 * 60), 1.0);
+    }
+
+    use crate::model::{
+        AttemptId, MemorisationState, PieceId, PracticeAttempt, Segment, SegmentId,
+    };
+    use chrono::TimeZone;
+
+    fn seg_with_history(
+        difficulty: Difficulty,
+        attempts: Vec<(&str, u32)>,
+    ) -> Segment {
+        Segment {
+            id: SegmentId("s".into()),
+            piece_id: PieceId("p".into()),
+            label: None,
+            rects: vec![],
+            difficulty,
+            tags: vec![],
+            notes: String::new(),
+            tempo_marking: None,
+            dynamic_marking: None,
+            expression_note: None,
+            scope_history: vec![],
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            practice_history: attempts
+                .into_iter()
+                .enumerate()
+                .map(|(i, (date, secs))| PracticeAttempt {
+                    id: AttemptId(format!("a{}", i)),
+                    segment_id: SegmentId("s".into()),
+                    started_at: chrono::DateTime::parse_from_rfc3339(date)
+                        .unwrap()
+                        .with_timezone(&Utc),
+                    duration_seconds: secs,
+                    recording_ref: None,
+                    self_rating_after: None,
+                })
+                .collect(),
+            memorisation_state: MemorisationState::None,
+            goal: None,
+        }
+    }
+
+    #[test]
+    fn struggling_unpractised_outscores_mastered_unpractised() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        let struggling = seg_with_history(Difficulty::Struggling, vec![]);
+        let mastered = seg_with_history(Difficulty::Mastered, vec![]);
+        // Both unpractised → both very stale, but struggling weight × regular curve
+        // should beat mastered weight × mastered curve (which caps at 2.0).
+        assert!(score(&struggling, now) > score(&mastered, now));
+    }
+
+    #[test]
+    fn just_practiced_struggling_still_has_meaningful_score() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        // Practised an hour ago for 10 minutes.
+        let s = seg_with_history(Difficulty::Struggling, vec![("2026-06-01T11:00:00Z", 600)]);
+        // weight 4 × staleness ~1.0 × under_invested 1.2 = ~4.8
+        let value = score(&s, now);
+        assert!(value > 4.0, "expected > 4.0, got {value}");
+        assert!(value < 7.0, "expected < 7.0, got {value}");
+    }
+
+    #[test]
+    fn never_practised_has_high_staleness() {
+        let s = seg_with_history(Difficulty::Working, vec![]);
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        assert_eq!(days_since_last_practice(&s, now), 10_000.0);
     }
 }
