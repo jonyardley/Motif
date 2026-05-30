@@ -92,6 +92,17 @@ pub fn days_since_last_practice(segment: &Segment, now: DateTime<Utc>) -> f64 {
 /// step, prefer the highest-scoring segment whose piece is different from the
 /// previously-picked segment's piece. Falls back to the highest remaining if no
 /// alternative exists.
+///
+/// **v1 limitation:** with 3+ pieces of near-tied scores the greedy step only
+/// avoids the *immediately preceding* piece, so output for `[A1, A2, B1, B2, C1, C2]`
+/// at `n=5` is `A1, B1, A2, B2, C1` rather than the strict round-robin
+/// `A1, B1, C1, A2, B2`. Acceptable per spec §3 ("the queue mixes them") — both
+/// satisfy the contextual-interference goal of breaking serial blocks of one piece.
+///
+/// **v1 deferral:** the spec's §3 rule 2 (within-piece adjacency-aware shuffling
+/// when consecutive top-scoring segments are spatially adjacent on the page) is
+/// not implemented in this phase; it requires rect-geometry knowledge that will
+/// land alongside the segment-editor work in a later phase.
 pub fn pick_session(segments: &[Segment], n: usize, now: DateTime<Utc>) -> Vec<SegmentId> {
     let mut scored: Vec<(SegmentId, PieceId, f64)> = segments
         .iter()
