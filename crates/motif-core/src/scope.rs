@@ -37,9 +37,7 @@ impl Segment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
-        Difficulty, MemorisationState, PageId, PieceId, SegmentId,
-    };
+    use crate::model::{Difficulty, MemorisationState, PageId, PieceId, SegmentId};
     use chrono::TimeZone;
 
     fn seg() -> Segment {
@@ -86,7 +84,10 @@ mod tests {
         assert_eq!(s.rects, new_rects);
         assert_eq!(s.scope_history.len(), 1);
         assert_eq!(s.scope_history[0].rects, original_rects);
-        assert_eq!(s.scope_history[0].difficulty_at_promotion, Difficulty::Solid);
+        assert_eq!(
+            s.scope_history[0].difficulty_at_promotion,
+            Difficulty::Solid
+        );
         assert_eq!(s.scope_history[0].promoted_at, now);
         assert_eq!(s.difficulty, Difficulty::Working);
     }
@@ -112,12 +113,24 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 5, 30, 12, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2026, 6, 5, 12, 0, 0).unwrap();
         s.expand_scope(
-            vec![Rect { page_id: PageId("p".into()), x: 0.0, y: 0.0, w: 100.0, h: 100.0 }],
+            vec![Rect {
+                page_id: PageId("p".into()),
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            }],
             t1,
             true,
         );
         s.expand_scope(
-            vec![Rect { page_id: PageId("p".into()), x: 0.0, y: 0.0, w: 300.0, h: 300.0 }],
+            vec![Rect {
+                page_id: PageId("p".into()),
+                x: 0.0,
+                y: 0.0,
+                w: 300.0,
+                h: 300.0,
+            }],
             t2,
             true,
         );

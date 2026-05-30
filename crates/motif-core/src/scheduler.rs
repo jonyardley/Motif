@@ -92,11 +92,7 @@ pub fn days_since_last_practice(segment: &Segment, now: DateTime<Utc>) -> f64 {
 /// step, prefer the highest-scoring segment whose piece is different from the
 /// previously-picked segment's piece. Falls back to the highest remaining if no
 /// alternative exists.
-pub fn pick_session(
-    segments: &[Segment],
-    n: usize,
-    now: DateTime<Utc>,
-) -> Vec<SegmentId> {
+pub fn pick_session(segments: &[Segment], n: usize, now: DateTime<Utc>) -> Vec<SegmentId> {
     let mut scored: Vec<(SegmentId, PieceId, f64)> = segments
         .iter()
         .map(|s| (s.id.clone(), s.piece_id.clone(), score(s, now)))
@@ -108,10 +104,7 @@ pub fn pick_session(
         let last_piece = picked.last().map(|(_, p)| p.clone());
         let idx = match &last_piece {
             None => 0,
-            Some(p) => scored
-                .iter()
-                .position(|(_, pid, _)| pid != p)
-                .unwrap_or(0),
+            Some(p) => scored.iter().position(|(_, pid, _)| pid != p).unwrap_or(0),
         };
         let (sid, pid, _) = scored.remove(idx);
         picked.push((sid, pid));
@@ -180,10 +173,7 @@ mod tests {
     };
     use chrono::TimeZone;
 
-    fn seg_with_history(
-        difficulty: Difficulty,
-        attempts: Vec<(&str, u32)>,
-    ) -> Segment {
+    fn seg_with_history(difficulty: Difficulty, attempts: Vec<(&str, u32)>) -> Segment {
         Segment {
             id: SegmentId("s".into()),
             piece_id: PieceId("p".into()),

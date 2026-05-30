@@ -91,7 +91,11 @@ fn scope_expansion_preserves_practice_history_across_stages() {
         true,
     );
 
-    assert_eq!(s.difficulty, Difficulty::Working, "default expand drops one step");
+    assert_eq!(
+        s.difficulty,
+        Difficulty::Working,
+        "default expand drops one step"
+    );
     assert_eq!(s.scope_history.len(), 1);
     assert_eq!(
         s.practice_history.len(),

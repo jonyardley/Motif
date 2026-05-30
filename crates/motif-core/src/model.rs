@@ -135,7 +135,10 @@ impl Segment {
 
     /// Total seconds practiced across all attempts.
     pub fn total_seconds_practiced(&self) -> u64 {
-        self.practice_history.iter().map(|a| a.duration_seconds as u64).sum()
+        self.practice_history
+            .iter()
+            .map(|a| a.duration_seconds as u64)
+            .sum()
     }
 
     /// Append a practice attempt to the segment's history.
@@ -189,7 +192,13 @@ mod tests {
 
     #[test]
     fn rect_roundtrips() {
-        let r = Rect { page_id: PageId("p1".into()), x: 1.0, y: 2.0, w: 30.0, h: 40.0 };
+        let r = Rect {
+            page_id: PageId("p1".into()),
+            x: 1.0,
+            y: 2.0,
+            w: 30.0,
+            h: 40.0,
+        };
         let json = serde_json::to_string(&r).unwrap();
         let back: Rect = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);
@@ -215,7 +224,10 @@ mod tests {
         assert_eq!(Difficulty::Mastered.one_step_lower(), Difficulty::Solid);
         assert_eq!(Difficulty::Solid.one_step_lower(), Difficulty::Working);
         assert_eq!(Difficulty::Working.one_step_lower(), Difficulty::Struggling);
-        assert_eq!(Difficulty::Struggling.one_step_lower(), Difficulty::Struggling);
+        assert_eq!(
+            Difficulty::Struggling.one_step_lower(),
+            Difficulty::Struggling
+        );
     }
 
     #[test]
@@ -229,7 +241,9 @@ mod tests {
         let a = PracticeAttempt {
             id: AttemptId("a1".into()),
             segment_id: SegmentId("s1".into()),
-            started_at: DateTime::parse_from_rfc3339("2026-05-29T10:00:00Z").unwrap().with_timezone(&Utc),
+            started_at: DateTime::parse_from_rfc3339("2026-05-29T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             duration_seconds: 120,
             recording_ref: Some("rec://abc".into()),
             self_rating_after: Some(Difficulty::Working),
@@ -242,9 +256,17 @@ mod tests {
     #[test]
     fn scope_stage_roundtrips() {
         let s = ScopeStage {
-            rects: vec![Rect { page_id: PageId("p1".into()), x: 0.0, y: 0.0, w: 10.0, h: 10.0 }],
+            rects: vec![Rect {
+                page_id: PageId("p1".into()),
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            }],
             difficulty_at_promotion: Difficulty::Solid,
-            promoted_at: DateTime::parse_from_rfc3339("2026-05-29T10:00:00Z").unwrap().with_timezone(&Utc),
+            promoted_at: DateTime::parse_from_rfc3339("2026-05-29T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: ScopeStage = serde_json::from_str(&json).unwrap();
@@ -264,7 +286,9 @@ mod tests {
             dynamic_marking: None,
             expression_note: None,
             scope_history: vec![],
-            created_at: DateTime::parse_from_rfc3339("2026-05-29T00:00:00Z").unwrap().with_timezone(&Utc),
+            created_at: DateTime::parse_from_rfc3339("2026-05-29T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             practice_history: vec![],
             memorisation_state: MemorisationState::None,
             goal: None,
@@ -285,7 +309,9 @@ mod tests {
             id: PieceId("piece-1".into()),
             title: "Ballade No. 1 in G minor".into(),
             composer: Some("Chopin".into()),
-            created_at: DateTime::parse_from_rfc3339("2026-05-29T00:00:00Z").unwrap().with_timezone(&Utc),
+            created_at: DateTime::parse_from_rfc3339("2026-05-29T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             pages: vec![Page {
                 id: PageId("page-1".into()),
                 index: 0,
@@ -309,7 +335,9 @@ mod tests {
         s.practice_history.push(PracticeAttempt {
             id: AttemptId("a1".into()),
             segment_id: SegmentId("s1".into()),
-            started_at: DateTime::parse_from_rfc3339("2026-05-20T10:00:00Z").unwrap().with_timezone(&Utc),
+            started_at: DateTime::parse_from_rfc3339("2026-05-20T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             duration_seconds: 60,
             recording_ref: None,
             self_rating_after: None,
@@ -317,13 +345,17 @@ mod tests {
         s.practice_history.push(PracticeAttempt {
             id: AttemptId("a2".into()),
             segment_id: SegmentId("s1".into()),
-            started_at: DateTime::parse_from_rfc3339("2026-05-22T10:00:00Z").unwrap().with_timezone(&Utc),
+            started_at: DateTime::parse_from_rfc3339("2026-05-22T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             duration_seconds: 90,
             recording_ref: None,
             self_rating_after: None,
         });
 
-        let end_of_second = DateTime::parse_from_rfc3339("2026-05-22T10:01:30Z").unwrap().with_timezone(&Utc);
+        let end_of_second = DateTime::parse_from_rfc3339("2026-05-22T10:01:30Z")
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(s.last_practiced_at(), Some(end_of_second));
         assert_eq!(s.total_seconds_practiced(), 150);
     }
@@ -335,7 +367,9 @@ mod tests {
         s.record_attempt(PracticeAttempt {
             id: AttemptId("a1".into()),
             segment_id: SegmentId("s1".into()),
-            started_at: DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z").unwrap().with_timezone(&Utc),
+            started_at: DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             duration_seconds: 60,
             recording_ref: None,
             self_rating_after: None,
@@ -349,14 +383,19 @@ mod tests {
         s.record_attempt(PracticeAttempt {
             id: AttemptId("a1".into()),
             segment_id: SegmentId("s1".into()),
-            started_at: DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z").unwrap().with_timezone(&Utc),
+            started_at: DateTime::parse_from_rfc3339("2026-05-30T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             duration_seconds: 60,
             recording_ref: None,
             self_rating_after: None,
         });
         s.self_rate(Difficulty::Working);
         assert_eq!(s.difficulty, Difficulty::Working);
-        assert_eq!(s.practice_history[0].self_rating_after, Some(Difficulty::Working));
+        assert_eq!(
+            s.practice_history[0].self_rating_after,
+            Some(Difficulty::Working)
+        );
     }
 
     #[test]

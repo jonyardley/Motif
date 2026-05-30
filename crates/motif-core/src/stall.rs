@@ -38,10 +38,7 @@ pub fn is_stalled(
         return false;
     }
 
-    let rated: Vec<_> = recent
-        .iter()
-        .filter_map(|a| a.self_rating_after)
-        .collect();
+    let rated: Vec<_> = recent.iter().filter_map(|a| a.self_rating_after).collect();
 
     if rated.is_empty() {
         // Many attempts, no ratings — treat as stalled (user keeps practising without judging
@@ -99,7 +96,8 @@ mod tests {
     #[test]
     fn not_stalled_when_too_few_attempts() {
         let mut s = seg();
-        s.practice_history.push(att("2026-05-30T10:00:00Z", Some(Difficulty::Struggling)));
+        s.practice_history
+            .push(att("2026-05-30T10:00:00Z", Some(Difficulty::Struggling)));
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
         assert!(!is_stalled(&s, now, 6, 2));
     }
@@ -115,7 +113,8 @@ mod tests {
             "2026-05-26T10:00:00Z",
             "2026-05-28T10:00:00Z",
         ] {
-            s.practice_history.push(att(date, Some(Difficulty::Struggling)));
+            s.practice_history
+                .push(att(date, Some(Difficulty::Struggling)));
         }
         let now = Utc.with_ymd_and_hms(2026, 5, 30, 12, 0, 0).unwrap();
         assert!(is_stalled(&s, now, 6, 2));
@@ -124,12 +123,18 @@ mod tests {
     #[test]
     fn not_stalled_when_upward_rating_change_present() {
         let mut s = seg();
-        s.practice_history.push(att("2026-05-18T10:00:00Z", Some(Difficulty::Struggling)));
-        s.practice_history.push(att("2026-05-20T10:00:00Z", Some(Difficulty::Struggling)));
-        s.practice_history.push(att("2026-05-22T10:00:00Z", Some(Difficulty::Struggling)));
-        s.practice_history.push(att("2026-05-24T10:00:00Z", Some(Difficulty::Struggling)));
-        s.practice_history.push(att("2026-05-26T10:00:00Z", Some(Difficulty::Working)));
-        s.practice_history.push(att("2026-05-28T10:00:00Z", Some(Difficulty::Working)));
+        s.practice_history
+            .push(att("2026-05-18T10:00:00Z", Some(Difficulty::Struggling)));
+        s.practice_history
+            .push(att("2026-05-20T10:00:00Z", Some(Difficulty::Struggling)));
+        s.practice_history
+            .push(att("2026-05-22T10:00:00Z", Some(Difficulty::Struggling)));
+        s.practice_history
+            .push(att("2026-05-24T10:00:00Z", Some(Difficulty::Struggling)));
+        s.practice_history
+            .push(att("2026-05-26T10:00:00Z", Some(Difficulty::Working)));
+        s.practice_history
+            .push(att("2026-05-28T10:00:00Z", Some(Difficulty::Working)));
         let now = Utc.with_ymd_and_hms(2026, 5, 30, 12, 0, 0).unwrap();
         assert!(!is_stalled(&s, now, 6, 2));
     }
@@ -163,7 +168,8 @@ mod tests {
             "2026-05-08T10:00:00Z",
             "2026-05-15T10:00:00Z",
         ] {
-            s.practice_history.push(att(date, Some(Difficulty::Struggling)));
+            s.practice_history
+                .push(att(date, Some(Difficulty::Struggling)));
         }
         let now = Utc.with_ymd_and_hms(2026, 5, 30, 12, 0, 0).unwrap();
         // Only one attempt within the last 2 weeks → below threshold of 6.
