@@ -26,6 +26,49 @@ pub struct Rect {
     pub h: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Difficulty {
+    Struggling,
+    Working,
+    Solid,
+    Mastered,
+}
+
+impl Difficulty {
+    /// 0..=3 ranking, higher = closer to mastered. Used to decide whether
+    /// a difficulty change was "upward" (improvement) or not.
+    pub fn rank(self) -> u8 {
+        match self {
+            Difficulty::Struggling => 0,
+            Difficulty::Working => 1,
+            Difficulty::Solid => 2,
+            Difficulty::Mastered => 3,
+        }
+    }
+
+    /// Scheduler weight. Mastered is 1.0 (floor — never zero), Struggling 4.0.
+    pub fn weight(self) -> f64 {
+        match self {
+            Difficulty::Struggling => 4.0,
+            Difficulty::Working => 3.0,
+            Difficulty::Solid => 2.0,
+            Difficulty::Mastered => 1.0,
+        }
+    }
+
+    /// Step one level down (toward Struggling). Saturates at Struggling.
+    /// Used when a segment's scope is expanded — default behaviour is to
+    /// re-rate the larger scope one step easier than the kernel.
+    pub fn one_step_lower(self) -> Difficulty {
+        match self {
+            Difficulty::Struggling => Difficulty::Struggling,
+            Difficulty::Working => Difficulty::Struggling,
+            Difficulty::Solid => Difficulty::Working,
+            Difficulty::Mastered => Difficulty::Solid,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,5 +88,28 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let back: Rect = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn difficulty_weights_match_spec() {
+        assert_eq!(Difficulty::Struggling.weight(), 4.0);
+        assert_eq!(Difficulty::Working.weight(), 3.0);
+        assert_eq!(Difficulty::Solid.weight(), 2.0);
+        assert_eq!(Difficulty::Mastered.weight(), 1.0);
+    }
+
+    #[test]
+    fn difficulty_rank_is_ordered() {
+        assert!(Difficulty::Struggling.rank() < Difficulty::Working.rank());
+        assert!(Difficulty::Working.rank() < Difficulty::Solid.rank());
+        assert!(Difficulty::Solid.rank() < Difficulty::Mastered.rank());
+    }
+
+    #[test]
+    fn difficulty_one_step_lower_saturates_at_struggling() {
+        assert_eq!(Difficulty::Mastered.one_step_lower(), Difficulty::Solid);
+        assert_eq!(Difficulty::Solid.one_step_lower(), Difficulty::Working);
+        assert_eq!(Difficulty::Working.one_step_lower(), Difficulty::Struggling);
+        assert_eq!(Difficulty::Struggling.one_step_lower(), Difficulty::Struggling);
     }
 }
