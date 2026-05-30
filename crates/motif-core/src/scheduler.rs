@@ -2,6 +2,7 @@
 
 use crate::model::Difficulty;
 use crate::model::Segment;
+use crate::model::{PieceId, SegmentId};
 use chrono::{DateTime, Utc};
 
 /// Wraps `Difficulty::weight` for symmetry with the other curve functions in this module.
@@ -81,6 +82,42 @@ pub fn days_since_last_practice(segment: &Segment, now: DateTime<Utc>) -> f64 {
             secs / 86_400.0
         }
     }
+}
+
+/// Picks the next session's segments, applying the cross-piece interleaving rule:
+/// avoid two consecutive segments from the same piece when an equally-or-near-equally
+/// scored alternative from a different piece is available.
+///
+/// Algorithm: sort all segments by raw score descending, then greedily pick — at each
+/// step, prefer the highest-scoring segment whose piece is different from the
+/// previously-picked segment's piece. Falls back to the highest remaining if no
+/// alternative exists.
+pub fn pick_session(
+    segments: &[Segment],
+    n: usize,
+    now: DateTime<Utc>,
+) -> Vec<SegmentId> {
+    let mut scored: Vec<(SegmentId, PieceId, f64)> = segments
+        .iter()
+        .map(|s| (s.id.clone(), s.piece_id.clone(), score(s, now)))
+        .collect();
+    scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut picked: Vec<(SegmentId, PieceId)> = Vec::with_capacity(n);
+    while picked.len() < n && !scored.is_empty() {
+        let last_piece = picked.last().map(|(_, p)| p.clone());
+        let idx = match &last_piece {
+            None => 0,
+            Some(p) => scored
+                .iter()
+                .position(|(_, pid, _)| pid != p)
+                .unwrap_or(0),
+        };
+        let (sid, pid, _) = scored.remove(idx);
+        picked.push((sid, pid));
+    }
+
+    picked.into_iter().map(|(s, _)| s).collect()
 }
 
 #[cfg(test)]
@@ -205,5 +242,66 @@ mod tests {
         let s = seg_with_history(Difficulty::Working, vec![]);
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
         assert_eq!(days_since_last_practice(&s, now), 10_000.0);
+    }
+
+    fn seg_in_piece(id: &str, piece: &str, difficulty: Difficulty) -> Segment {
+        let mut s = seg_with_history(difficulty, vec![]);
+        s.id = SegmentId(id.into());
+        s.piece_id = PieceId(piece.into());
+        s
+    }
+
+    #[test]
+    fn pick_session_returns_top_n_when_only_one_piece() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        let segs = vec![
+            seg_in_piece("s1", "p", Difficulty::Struggling),
+            seg_in_piece("s2", "p", Difficulty::Working),
+            seg_in_piece("s3", "p", Difficulty::Solid),
+        ];
+        let picked = pick_session(&segs, 2, now);
+        assert_eq!(picked, vec![SegmentId("s1".into()), SegmentId("s2".into())]);
+    }
+
+    #[test]
+    fn pick_session_interleaves_across_pieces() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        // Two struggling segments in piece A, one struggling in piece B.
+        // Raw score order would put both A's first; interleaving should put B in between.
+        let segs = vec![
+            seg_in_piece("a1", "A", Difficulty::Struggling),
+            seg_in_piece("a2", "A", Difficulty::Struggling),
+            seg_in_piece("b1", "B", Difficulty::Struggling),
+        ];
+        let picked = pick_session(&segs, 3, now);
+        assert_eq!(picked[0], SegmentId("a1".into()));
+        assert_eq!(picked[1], SegmentId("b1".into()));
+        assert_eq!(picked[2], SegmentId("a2".into()));
+    }
+
+    #[test]
+    fn pick_session_falls_back_when_no_alternative_piece() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        // Only one piece — interleaving has nothing to do, returns top-N as-is.
+        let segs = vec![
+            seg_in_piece("s1", "p", Difficulty::Struggling),
+            seg_in_piece("s2", "p", Difficulty::Working),
+        ];
+        let picked = pick_session(&segs, 2, now);
+        assert_eq!(picked, vec![SegmentId("s1".into()), SegmentId("s2".into())]);
+    }
+
+    #[test]
+    fn pick_session_returns_empty_for_empty_input() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        assert!(pick_session(&[], 5, now).is_empty());
+    }
+
+    #[test]
+    fn pick_session_returns_fewer_than_n_when_not_enough_segments() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        let segs = vec![seg_in_piece("s1", "p", Difficulty::Struggling)];
+        let picked = pick_session(&segs, 5, now);
+        assert_eq!(picked.len(), 1);
     }
 }
