@@ -127,6 +127,25 @@ pub struct Segment {
     pub goal: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Page {
+    pub id: PageId,
+    pub index: u32,
+    pub image_ref: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Piece {
+    pub id: PieceId,
+    pub title: String,
+    pub composer: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub pages: Vec<Page>,
+    pub segments: Vec<Segment>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +249,26 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: Segment = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn piece_roundtrips_with_pages_and_segments() {
+        let piece = Piece {
+            id: PieceId("piece-1".into()),
+            title: "Ballade No. 1 in G minor".into(),
+            composer: Some("Chopin".into()),
+            created_at: DateTime::parse_from_rfc3339("2026-05-29T00:00:00Z").unwrap().with_timezone(&Utc),
+            pages: vec![Page {
+                id: PageId("page-1".into()),
+                index: 0,
+                image_ref: "file://page-1.jpg".into(),
+                width: 1500,
+                height: 2000,
+            }],
+            segments: vec![make_segment("seg-1", "piece-1", Difficulty::Struggling)],
+        };
+        let json = serde_json::to_string(&piece).unwrap();
+        let back: Piece = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, piece);
     }
 }
